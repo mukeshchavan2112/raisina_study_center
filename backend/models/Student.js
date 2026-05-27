@@ -169,6 +169,16 @@ const studentSchema = new mongoose.Schema(
         default: null,
       },
 
+      startDate: {
+        type: Date,
+        default: null,
+      },
+
+      endDate: {
+        type: Date,
+        default: null,
+      },
+
       seatNo: {
         type: String,
         trim: true,

@@ -40,6 +40,18 @@ const hostelAllocationSchema = new mongoose.Schema(
       default: Date.now,
     },
 
+    startDate: {
+      type: Date,
+      default: Date.now,
+    },
+
+    endDate: {
+      type: Date,
+      default: null,
+    },
+
+    // Legacy/backward-compatible field only.
+    // New fee/payment handling must be done from Accounts module.
     monthlyFee: {
       type: Number,
       default: 0,

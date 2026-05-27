@@ -310,11 +310,34 @@ export const markOverdue = asyncHandler(async (req, res) => {
   return sendSuccess(res, 200, `${result.modifiedCount} issues marked overdue`);
 });
 
+const parseOptionalDate = (value) => {
+  if (!value) return null;
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const validateDateRange = (startDate, endDate) => {
+  if (startDate && endDate && endDate < startDate) {
+    return false;
+  }
+
+  return true;
+};
+
 export const updateStudySpace = asyncHandler(async (req, res) => {
   const centerFilter = buildCenterFilter(req);
 
-  const { seatNo, joiningDate, monthlyFee, status, remarks, libraryAccess } =
-    req.body;
+  const {
+    seatNo,
+    joiningDate,
+    startDate,
+    endDate,
+    monthlyFee,
+    status,
+    remarks,
+    libraryAccess,
+  } = req.body;
 
   const student = await Student.findOne({
     _id: req.params.studentId,
@@ -335,7 +358,8 @@ export const updateStudySpace = asyncHandler(async (req, res) => {
   }
 
   if (libraryAccess !== undefined) {
-    student.libraryAccess = Boolean(libraryAccess);
+    student.libraryAccess =
+      libraryAccess === true || libraryAccess === "true";
 
     if (!student.facilities) {
       student.facilities = {};
@@ -348,8 +372,41 @@ export const updateStudySpace = asyncHandler(async (req, res) => {
     return sendError(
       res,
       400,
-      "Student does not have library/study space access",
+      "Student does not have library/study space access"
     );
+  }
+
+  const parsedJoiningDate =
+    joiningDate !== undefined ? parseOptionalDate(joiningDate) : undefined;
+
+  const parsedStartDate =
+    startDate !== undefined ? parseOptionalDate(startDate) : undefined;
+
+  const parsedEndDate =
+    endDate !== undefined ? parseOptionalDate(endDate) : undefined;
+
+  if (joiningDate && !parsedJoiningDate) {
+    return sendError(res, 400, "Invalid joining date");
+  }
+
+  if (startDate && !parsedStartDate) {
+    return sendError(res, 400, "Invalid start date");
+  }
+
+  if (endDate && !parsedEndDate) {
+    return sendError(res, 400, "Invalid end date");
+  }
+
+  const finalStartDate =
+    parsedStartDate !== undefined
+      ? parsedStartDate
+      : student.libraryProfile.startDate || parsedJoiningDate || null;
+
+  const finalEndDate =
+    parsedEndDate !== undefined ? parsedEndDate : student.libraryProfile.endDate;
+
+  if (!validateDateRange(finalStartDate, finalEndDate)) {
+    return sendError(res, 400, "End date cannot be before start date");
   }
 
   if (seatNo !== undefined) {
@@ -357,12 +414,20 @@ export const updateStudySpace = asyncHandler(async (req, res) => {
   }
 
   if (joiningDate !== undefined) {
-    student.libraryProfile.joiningDate = joiningDate
-      ? new Date(joiningDate)
-      : null;
+    student.libraryProfile.joiningDate = parsedJoiningDate;
   }
 
-  if (monthlyFee !== undefined) {
+  if (startDate !== undefined) {
+    student.libraryProfile.startDate = parsedStartDate;
+  }
+
+  if (endDate !== undefined) {
+    student.libraryProfile.endDate = parsedEndDate;
+  }
+
+  // Legacy/backward-compatible only.
+  // Do not expose this in the Library frontend anymore.
+  if (monthlyFee !== undefined && monthlyFee !== "") {
     const fee = Number(monthlyFee);
 
     if (!Number.isFinite(fee) || fee < 0) {
@@ -384,6 +449,11 @@ export const updateStudySpace = asyncHandler(async (req, res) => {
     student.libraryProfile.joiningDate = new Date();
   }
 
+  if (student.libraryAccess && !student.libraryProfile.startDate) {
+    student.libraryProfile.startDate =
+      student.libraryProfile.joiningDate || new Date();
+  }
+
   student.libraryProfile.isAssigned = true;
 
   if (
@@ -396,4 +466,77 @@ export const updateStudySpace = asyncHandler(async (req, res) => {
   await student.save();
 
   return sendSuccess(res, 200, "Study space details updated", student);
+});
+
+// PUT /api/library/students/:studentId/renew
+// Body: { startDate, endDate }
+export const renewLibraryMembership = asyncHandler(async (req, res) => {
+  const centerFilter = buildCenterFilter(req);
+  const { startDate, endDate } = req.body;
+
+  if (!startDate || !endDate) {
+    return sendError(res, 400, "startDate and endDate are required");
+  }
+
+  const parsedStartDate = new Date(startDate);
+  const parsedEndDate = new Date(endDate);
+
+  if (
+    Number.isNaN(parsedStartDate.getTime()) ||
+    Number.isNaN(parsedEndDate.getTime())
+  ) {
+    return sendError(res, 400, "Invalid renewal dates");
+  }
+
+  if (parsedEndDate < parsedStartDate) {
+    return sendError(res, 400, "End date cannot be before start date");
+  }
+
+  const student = await Student.findOne({
+    _id: req.params.studentId,
+    ...centerFilter,
+    deleted: false,
+  });
+
+  if (!student) {
+    return sendError(res, 404, "Student not found");
+  }
+
+  if (!student.libraryAccess && !student.facilities?.library) {
+    return sendError(
+      res,
+      400,
+      "Student does not have library/study space access"
+    );
+  }
+
+  if (!student.libraryProfile) {
+    student.libraryProfile = {};
+  }
+
+  student.libraryAccess = true;
+
+  if (!student.facilities) {
+    student.facilities = {};
+  }
+
+  student.facilities.library = true;
+
+  student.libraryProfile.isAssigned = true;
+  student.libraryProfile.startDate = parsedStartDate;
+  student.libraryProfile.endDate = parsedEndDate;
+  student.libraryProfile.status = "ACTIVE";
+
+  if (!student.libraryProfile.joiningDate) {
+    student.libraryProfile.joiningDate = parsedStartDate;
+  }
+
+  await student.save();
+
+  return sendSuccess(
+    res,
+    200,
+    "Library/study space membership renewed successfully",
+    student
+  );
 });

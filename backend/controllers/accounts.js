@@ -1,8 +1,22 @@
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import multer from "multer";
+import { fileURLToPath } from "url";
 import asyncHandler from "express-async-handler";
+
 import { sendSuccess, sendError } from "../utils/responseHandler.js";
 import { resolveCenterScope } from "../utils/accessControl.js";
 import Transaction from "../models/Transaction.js";
 import Student from "../models/Student.js";
+import OpeningBalance from "../models/OpeningBalance.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const UPLOAD_DIR = path.join(__dirname, "..", "uploads", "expense-evidence");
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const MONTHS = [
   "Jan",
@@ -18,6 +32,62 @@ const MONTHS = [
   "Nov",
   "Dec",
 ];
+
+const ALLOWED_EVIDENCE_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+];
+
+const getFileExtension = (file) => {
+  const originalExt = path.extname(file.originalname || "").toLowerCase();
+
+  if (originalExt) return originalExt;
+
+  if (file.mimetype === "application/pdf") return ".pdf";
+  if (file.mimetype === "image/png") return ".png";
+  if (file.mimetype === "image/webp") return ".webp";
+
+  return ".jpg";
+};
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, UPLOAD_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const ext = getFileExtension(file);
+    const uniqueName = `expense-${Date.now()}-${crypto
+      .randomBytes(8)
+      .toString("hex")}${ext}`;
+
+    cb(null, uniqueName);
+  },
+});
+
+const evidenceFileFilter = (_req, file, cb) => {
+  if (!ALLOWED_EVIDENCE_TYPES.includes(file.mimetype)) {
+    return cb(new Error("Only image and PDF evidence files are allowed"));
+  }
+
+  cb(null, true);
+};
+
+export const uploadExpenseEvidence = multer({
+  storage,
+  fileFilter: evidenceFileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+  },
+}).single("evidence");
+
+const cleanupUploadedFile = (file) => {
+  if (!file?.path) return;
+
+  fs.unlink(file.path, () => {});
+};
 
 const buildCenterFilter = (req, overrideCenterId = null) => {
   const centerId = resolveCenterScope(req, overrideCenterId);
@@ -38,9 +108,37 @@ const getYearRange = (year) => {
   };
 };
 
+const getMonthRange = (month) => {
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const selectedMonth = /^\d{4}-\d{2}$/.test(month || "")
+    ? month
+    : currentMonth;
+
+  const [year, monthNumber] = selectedMonth.split("-").map(Number);
+
+  const start = new Date(Date.UTC(year, monthNumber - 1, 1, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, monthNumber, 1, 0, 0, 0, 0));
+
+  return {
+    selectedMonth,
+    start,
+    end,
+  };
+};
+
 const validateAmount = (amount) => {
   const value = Number(amount);
   return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const validateLedgerAmount = (amount) => {
+  const value = Number(amount);
+  return Number.isFinite(value) ? value : null;
+};
+
+const getTransactionTotal = async (filter) => {
+  const transactions = await Transaction.find(filter).select("amount");
+  return transactions.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 };
 
 // ─── STUDENT FEES / RECEIPTS ──────────────────────────────
@@ -96,6 +194,10 @@ export const collectStudentFee = asyncHandler(async (req, res) => {
   }
 
   const txnDate = date ? new Date(date) : new Date();
+
+  if (Number.isNaN(txnDate.getTime())) {
+    return sendError(res, 400, "Invalid transaction date");
+  }
 
   const txn = await Transaction.create({
     center: finalCenterId,
@@ -188,13 +290,20 @@ export const addDonation = asyncHandler(async (req, res) => {
     return sendError(res, 400, "Amount must be greater than 0");
   }
 
+  const txnDate = date ? new Date(date) : new Date();
+
+  if (Number.isNaN(txnDate.getTime())) {
+    return sendError(res, 400, "Invalid donation date");
+  }
+
   const txn = await Transaction.create({
     center: finalCenterId,
     type: "CREDIT",
     source: category === "GRANT" ? "OTHER_INCOME" : "EXTERNAL_DONATION",
     category,
     amount: finalAmount,
-    date: date || new Date(),
+    date: txnDate,
+    month: txnDate.toISOString().slice(0, 7),
     donorName,
     donorDesignation,
     paymentMode,
@@ -249,6 +358,7 @@ export const addExpense = asyncHandler(async (req, res) => {
   const finalCenterId = getCenterIdForWrite(req, centerId);
 
   if (!finalCenterId) {
+    cleanupUploadedFile(req.file);
     return sendError(res, 400, "centerId is required");
   }
 
@@ -266,13 +376,22 @@ export const addExpense = asyncHandler(async (req, res) => {
   ];
 
   if (!expenseCategories.includes(category)) {
+    cleanupUploadedFile(req.file);
     return sendError(res, 400, "Invalid expense category");
   }
 
   const finalAmount = validateAmount(amount);
 
   if (!finalAmount) {
+    cleanupUploadedFile(req.file);
     return sendError(res, 400, "Amount must be greater than 0");
+  }
+
+  const txnDate = date ? new Date(date) : new Date();
+
+  if (Number.isNaN(txnDate.getTime())) {
+    cleanupUploadedFile(req.file);
+    return sendError(res, 400, "Invalid expense date");
   }
 
   const txn = await Transaction.create({
@@ -281,10 +400,12 @@ export const addExpense = asyncHandler(async (req, res) => {
     source: "EXPENSE",
     category,
     amount: finalAmount,
-    date: date || new Date(),
+    date: txnDate,
+    month: txnDate.toISOString().slice(0, 7),
     paymentMode,
     paidTo,
     notes,
+    evidenceUrl: req.file?.filename || null,
   });
 
   return sendSuccess(res, 201, "Expense recorded", txn);
@@ -317,6 +438,32 @@ export const getExpenses = asyncHandler(async (req, res) => {
     expenses,
     totalAmount,
   });
+});
+
+export const getExpenseEvidence = asyncHandler(async (req, res) => {
+  const txn = await Transaction.findOne({
+    _id: req.params.id,
+    ...buildCenterFilter(req),
+    source: "EXPENSE",
+    deleted: false,
+  });
+
+  if (!txn) {
+    return sendError(res, 404, "Expense not found");
+  }
+
+  if (!txn.evidenceUrl) {
+    return sendError(res, 404, "No evidence uploaded for this expense");
+  }
+
+  const safeFileName = path.basename(txn.evidenceUrl);
+  const evidencePath = path.join(UPLOAD_DIR, safeFileName);
+
+  if (!fs.existsSync(evidencePath)) {
+    return sendError(res, 404, "Evidence file not found");
+  }
+
+  return res.sendFile(evidencePath);
 });
 
 // ─── GENERAL LEDGER ───────────────────────────────────────
@@ -377,15 +524,141 @@ export const getTransactionById = asyncHandler(async (req, res) => {
   return sendSuccess(res, 200, "Transaction fetched", txn);
 });
 
+// ─── MONTHLY LEDGER / BALANCE ─────────────────────────────
+
+export const getMonthlyLedger = asyncHandler(async (req, res) => {
+  const { month, centerId } = req.query;
+  const { selectedMonth, start, end } = getMonthRange(month);
+
+  const centerFilter = buildCenterFilter(req, centerId);
+
+  const manualOpeningBalances = await OpeningBalance.find({
+    ...centerFilter,
+    month: selectedMonth,
+  });
+
+  let openingBalance = 0;
+  let openingBalanceMode = "CALCULATED";
+
+  if (manualOpeningBalances.length > 0) {
+    openingBalance = manualOpeningBalances.reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0
+    );
+    openingBalanceMode = "MANUAL";
+  } else {
+    const pastCredits = await getTransactionTotal({
+      ...centerFilter,
+      type: "CREDIT",
+      deleted: false,
+      date: { $lt: start },
+    });
+
+    const pastDebits = await getTransactionTotal({
+      ...centerFilter,
+      type: "DEBIT",
+      deleted: false,
+      date: { $lt: start },
+    });
+
+    openingBalance = pastCredits - pastDebits;
+  }
+
+  const deposits = await getTransactionTotal({
+    ...centerFilter,
+    type: "CREDIT",
+    deleted: false,
+    date: { $gte: start, $lt: end },
+  });
+
+  const expenses = await getTransactionTotal({
+    ...centerFilter,
+    type: "DEBIT",
+    source: "EXPENSE",
+    deleted: false,
+    date: { $gte: start, $lt: end },
+  });
+
+  const closingBalance = openingBalance + deposits - expenses;
+
+  const transactions = await Transaction.find({
+    ...centerFilter,
+    deleted: false,
+    date: { $gte: start, $lt: end },
+  })
+    .populate("center", "centerName centerCode city")
+    .populate("student", "studentName rscNumber mobileNumber")
+    .sort({ date: -1 });
+
+  return sendSuccess(res, 200, "Monthly ledger fetched", {
+    month: selectedMonth,
+    openingBalance,
+    openingBalanceMode,
+    totalDeposits: deposits,
+    totalExpenses: expenses,
+    closingBalance,
+    transactions,
+  });
+});
+
+export const saveOpeningBalance = asyncHandler(async (req, res) => {
+  const { centerId, month, amount } = req.body;
+
+  if (!/^\d{4}-\d{2}$/.test(month || "")) {
+    return sendError(res, 400, "month is required in YYYY-MM format");
+  }
+
+  const finalCenterId = getCenterIdForWrite(req, centerId);
+
+  if (!finalCenterId) {
+    return sendError(res, 400, "centerId is required");
+  }
+
+  const finalAmount = validateLedgerAmount(amount);
+
+  if (finalAmount === null) {
+    return sendError(res, 400, "Opening balance must be a valid number");
+  }
+
+  const openingBalance = await OpeningBalance.findOneAndUpdate(
+    {
+      center: finalCenterId,
+      month,
+    },
+    {
+      center: finalCenterId,
+      month,
+      amount: finalAmount,
+    },
+    {
+      new: true,
+      upsert: true,
+      runValidators: true,
+    }
+  );
+
+  return sendSuccess(res, 200, "Opening balance saved", openingBalance);
+});
+
 // ─── MONTHLY REPORTS ──────────────────────────────────────
 
 export const getMonthlyDepositSheet = asyncHandler(async (req, res) => {
   const { year, centerId } = req.query;
   const { selectedYear, start, end } = getYearRange(year);
 
-  const transactions = await Transaction.find({
-    ...buildCenterFilter(req, centerId),
+  const centerFilter = buildCenterFilter(req, centerId);
+
+  const creditTransactions = await Transaction.find({
+    ...centerFilter,
     type: "CREDIT",
+    deleted: false,
+    date: { $gte: start, $lte: end },
+  });
+
+  const expenseTransactions = await Transaction.find({
+    ...centerFilter,
+    type: "DEBIT",
+    source: "EXPENSE",
     deleted: false,
     date: { $gte: start, $lte: end },
   });
@@ -398,10 +671,12 @@ export const getMonthlyDepositSheet = asyncHandler(async (req, res) => {
     studentFees: 0,
     america: 0,
     other: 0,
+    expenses: 0,
+    balance: 0,
     total: 0,
   }));
 
-  transactions.forEach((txn) => {
+  creditTransactions.forEach((txn) => {
     const index = new Date(txn.date).getMonth();
     const amount = Number(txn.amount || 0);
 
@@ -422,6 +697,17 @@ export const getMonthlyDepositSheet = asyncHandler(async (req, res) => {
     rows[index].total += amount;
   });
 
+  expenseTransactions.forEach((txn) => {
+    const index = new Date(txn.date).getMonth();
+    const amount = Number(txn.amount || 0);
+
+    rows[index].expenses += amount;
+  });
+
+  rows.forEach((row) => {
+    row.balance = row.total - row.expenses;
+  });
+
   const totals = rows.reduce(
     (sum, row) => ({
       officer: sum.officer + row.officer,
@@ -430,6 +716,8 @@ export const getMonthlyDepositSheet = asyncHandler(async (req, res) => {
       studentFees: sum.studentFees + row.studentFees,
       america: sum.america + row.america,
       other: sum.other + row.other,
+      expenses: sum.expenses + row.expenses,
+      balance: sum.balance + row.balance,
       total: sum.total + row.total,
     }),
     {
@@ -439,6 +727,8 @@ export const getMonthlyDepositSheet = asyncHandler(async (req, res) => {
       studentFees: 0,
       america: 0,
       other: 0,
+      expenses: 0,
+      balance: 0,
       total: 0,
     }
   );
@@ -454,10 +744,19 @@ export const getMonthlyExpenditureSheet = asyncHandler(async (req, res) => {
   const { year, centerId } = req.query;
   const { selectedYear, start, end } = getYearRange(year);
 
-  const transactions = await Transaction.find({
-    ...buildCenterFilter(req, centerId),
+  const centerFilter = buildCenterFilter(req, centerId);
+
+  const expenseTransactions = await Transaction.find({
+    ...centerFilter,
     type: "DEBIT",
     source: "EXPENSE",
+    deleted: false,
+    date: { $gte: start, $lte: end },
+  });
+
+  const creditTransactions = await Transaction.find({
+    ...centerFilter,
+    type: "CREDIT",
     deleted: false,
     date: { $gte: start, $lte: end },
   });
@@ -471,11 +770,13 @@ export const getMonthlyExpenditureSheet = asyncHandler(async (req, res) => {
     lightBill: 0,
     officeBoy: 0,
     other: 0,
+    deposits: 0,
+    balance: 0,
     total: 0,
     remark: "",
   }));
 
-  transactions.forEach((txn) => {
+  expenseTransactions.forEach((txn) => {
     const index = new Date(txn.date).getMonth();
     const amount = Number(txn.amount || 0);
 
@@ -498,6 +799,17 @@ export const getMonthlyExpenditureSheet = asyncHandler(async (req, res) => {
     rows[index].total += amount;
   });
 
+  creditTransactions.forEach((txn) => {
+    const index = new Date(txn.date).getMonth();
+    const amount = Number(txn.amount || 0);
+
+    rows[index].deposits += amount;
+  });
+
+  rows.forEach((row) => {
+    row.balance = row.deposits - row.total;
+  });
+
   const totals = rows.reduce(
     (sum, row) => ({
       newspaper: sum.newspaper + row.newspaper,
@@ -507,6 +819,8 @@ export const getMonthlyExpenditureSheet = asyncHandler(async (req, res) => {
       lightBill: sum.lightBill + row.lightBill,
       officeBoy: sum.officeBoy + row.officeBoy,
       other: sum.other + row.other,
+      deposits: sum.deposits + row.deposits,
+      balance: sum.balance + row.balance,
       total: sum.total + row.total,
     }),
     {
@@ -517,6 +831,8 @@ export const getMonthlyExpenditureSheet = asyncHandler(async (req, res) => {
       lightBill: 0,
       officeBoy: 0,
       other: 0,
+      deposits: 0,
+      balance: 0,
       total: 0,
     }
   );

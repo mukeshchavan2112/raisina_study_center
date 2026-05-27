@@ -12,6 +12,7 @@ import {
   getHostelStudents,
   getEligibleHostelStudents,
   getHostelAllocations,
+  renewHostelAllocation,
 } from "../controllers/hostel.js";
 
 const router = Router();
@@ -22,6 +23,7 @@ router.use(authorizeRoles("CENTER_ADMIN"));
 // Important: keep these before "/:id"
 router.get("/eligible-students", getEligibleHostelStudents);
 router.get("/allocations", getHostelAllocations);
+router.post("/allocations/:id/renew", renewHostelAllocation);
 
 router.get("/", getHostels);
 router.get("/:id", getHostelById);

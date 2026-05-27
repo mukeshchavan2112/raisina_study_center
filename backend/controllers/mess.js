@@ -25,6 +25,12 @@ const addMessCounts = async (messes) => {
   return result;
 };
 
+const parseOptionalDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
 // GET /api/messes
 export const getMesses = asyncHandler(async (req, res) => {
   const centerId = resolveCenterScope(req, req.query.centerId);
@@ -113,20 +119,25 @@ export const createMess = asyncHandler(async (req, res) => {
 
   const { messName, hostel, address, capacity, monthlyFee } = req.body;
 
-  if (!messName || capacity === undefined || monthlyFee === undefined) {
-    return sendError(
-      res,
-      400,
-      "messName, capacity and monthlyFee are required"
-    );
+  if (!messName || capacity === undefined || capacity === "") {
+    return sendError(res, 400, "messName and capacity are required");
   }
+
+  const parsedCapacity = Number(capacity);
+
+  if (Number.isNaN(parsedCapacity) || parsedCapacity < 1) {
+    return sendError(res, 400, "Capacity must be a valid positive number");
+  }
+
+  const parsedMonthlyFee =
+    monthlyFee !== undefined && monthlyFee !== "" ? Number(monthlyFee) : 0;
 
   const mess = await Mess.create({
     messName,
     hostel: hostel || null,
     address,
-    capacity: Number(capacity),
-    monthlyFee: Number(monthlyFee),
+    capacity: parsedCapacity,
+    monthlyFee: Number.isNaN(parsedMonthlyFee) ? 0 : parsedMonthlyFee,
     status: "ACTIVE",
     center: centerId,
   });
@@ -145,35 +156,42 @@ export const updateMess = asyncHandler(async (req, res) => {
 
   ensureCenterScope(req, mess.center);
 
-  const allowed = [
-    "messName",
-    "hostel",
-    "address",
-    "capacity",
-    "monthlyFee",
-    "status",
-  ];
+  const { messName, hostel, address, capacity, monthlyFee, status } = req.body;
 
-  allowed.forEach((field) => {
-    if (req.body[field] !== undefined) {
-      mess[field] = req.body[field];
+  if (messName !== undefined) mess.messName = messName;
+  if (hostel !== undefined) mess.hostel = hostel || null;
+  if (address !== undefined) mess.address = address;
+  if (status !== undefined) mess.status = status;
+
+  if (monthlyFee !== undefined && monthlyFee !== "") {
+    const parsedMonthlyFee = Number(monthlyFee);
+    if (!Number.isNaN(parsedMonthlyFee) && parsedMonthlyFee >= 0) {
+      mess.monthlyFee = parsedMonthlyFee;
     }
-  });
+  }
 
-  if (req.body.capacity !== undefined) {
+  if (capacity !== undefined && capacity !== "") {
+    const parsedCapacity = Number(capacity);
+
+    if (Number.isNaN(parsedCapacity) || parsedCapacity < 1) {
+      return sendError(res, 400, "Capacity must be a valid positive number");
+    }
+
     const activeCount = await MessEnrollment.countDocuments({
       mess: mess._id,
       status: "ACTIVE",
       deleted: false,
     });
 
-    if (Number(req.body.capacity) < activeCount) {
+    if (parsedCapacity < activeCount) {
       return sendError(
         res,
         400,
         "New capacity cannot be less than current active enrollments"
       );
     }
+
+    mess.capacity = parsedCapacity;
   }
 
   await mess.save();
@@ -213,7 +231,7 @@ export const deleteMess = asyncHandler(async (req, res) => {
 });
 
 // POST /api/messes/:id/enroll
-// Body: { studentId, planType, startDate, monthlyFee, remarks }
+// Body: { studentId, planType, startDate, endDate, remarks }
 export const enrollStudent = asyncHandler(async (req, res) => {
   const mess = await Mess.findOne({
     _id: req.params.id,
@@ -228,10 +246,26 @@ export const enrollStudent = asyncHandler(async (req, res) => {
     return sendError(res, 400, "This mess is currently inactive");
   }
 
-  const { studentId, planType, startDate, monthlyFee, remarks } = req.body;
+  const { studentId, planType, startDate, endDate, monthlyFee, remarks } =
+    req.body;
 
   if (!studentId) {
     return sendError(res, 400, "studentId is required");
+  }
+
+  const finalStartDate = startDate ? new Date(startDate) : new Date();
+  const finalEndDate = parseOptionalDate(endDate);
+
+  if (Number.isNaN(finalStartDate.getTime())) {
+    return sendError(res, 400, "Invalid start date");
+  }
+
+  if (endDate && !finalEndDate) {
+    return sendError(res, 400, "Invalid end date");
+  }
+
+  if (finalEndDate && finalEndDate < finalStartDate) {
+    return sendError(res, 400, "End date cannot be before start date");
   }
 
   const student = await Student.findOne({
@@ -283,16 +317,17 @@ export const enrollStudent = asyncHandler(async (req, res) => {
     return sendError(res, 400, "Student already has an active mess enrollment");
   }
 
+  const parsedMonthlyFee =
+    monthlyFee !== undefined && monthlyFee !== "" ? Number(monthlyFee) : 0;
+
   const enrollment = await MessEnrollment.create({
     center: mess.center,
     mess: mess._id,
     student: student._id,
     planType: planType || "MONTHLY",
-    startDate: startDate || Date.now(),
-    monthlyFee:
-      monthlyFee !== undefined && monthlyFee !== ""
-        ? Number(monthlyFee)
-        : mess.monthlyFee,
+    startDate: finalStartDate,
+    endDate: finalEndDate,
+    monthlyFee: Number.isNaN(parsedMonthlyFee) ? 0 : parsedMonthlyFee,
     remarks,
     status: "ACTIVE",
   });
@@ -370,6 +405,113 @@ export const unenrollStudent = asyncHandler(async (req, res) => {
     mess,
     enrollment,
   });
+});
+
+// POST /api/messes/enrollments/:id/renew
+// Body: { startDate, endDate }
+export const renewMessEnrollment = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { startDate, endDate } = req.body;
+
+  if (!startDate || !endDate) {
+    return sendError(res, 400, "startDate and endDate are required");
+  }
+
+  const finalStartDate = new Date(startDate);
+  const finalEndDate = new Date(endDate);
+
+  if (
+    Number.isNaN(finalStartDate.getTime()) ||
+    Number.isNaN(finalEndDate.getTime())
+  ) {
+    return sendError(res, 400, "Invalid renewal dates");
+  }
+
+  if (finalEndDate < finalStartDate) {
+    return sendError(res, 400, "End date cannot be before start date");
+  }
+
+  const enrollment = await MessEnrollment.findOne({
+    _id: id,
+    deleted: false,
+  });
+
+  if (!enrollment) {
+    return sendError(res, 404, "Mess enrollment not found");
+  }
+
+  ensureCenterScope(req, enrollment.center);
+
+  const mess = await Mess.findOne({
+    _id: enrollment.mess,
+    deleted: false,
+  });
+
+  if (!mess) {
+    return sendError(res, 404, "Mess not found");
+  }
+
+  const student = await Student.findOne({
+    _id: enrollment.student,
+    deleted: false,
+  });
+
+  if (!student) {
+    return sendError(res, 404, "Student not found");
+  }
+
+  ensureCenterScope(req, student.center);
+
+  const oldStatus = enrollment.status;
+
+  if (oldStatus !== "ACTIVE") {
+    const existingActiveEnrollment = await MessEnrollment.findOne({
+      student: student._id,
+      status: "ACTIVE",
+      deleted: false,
+      _id: { $ne: enrollment._id },
+    });
+
+    if (existingActiveEnrollment) {
+      return sendError(
+        res,
+        400,
+        "Student already has another active mess enrollment"
+      );
+    }
+
+    const activeCount = await MessEnrollment.countDocuments({
+      mess: mess._id,
+      status: "ACTIVE",
+      deleted: false,
+    });
+
+    if (activeCount >= mess.capacity) {
+      return sendError(res, 400, "Mess is at full capacity. Cannot renew.");
+    }
+  }
+
+  enrollment.startDate = finalStartDate;
+  enrollment.endDate = finalEndDate;
+  enrollment.status = "ACTIVE";
+
+  student.mess = mess._id;
+
+  await Promise.all([enrollment.save(), student.save()]);
+
+  const populatedEnrollment = await MessEnrollment.findById(enrollment._id)
+    .populate("mess", "messName monthlyFee capacity")
+    .populate(
+      "student",
+      "studentName rscNumber prn studentType mobileNumber facilities"
+    );
+
+  return sendSuccess(
+    res,
+    200,
+    "Mess membership renewed successfully",
+    populatedEnrollment
+  );
 });
 
 // GET /api/messes/:id/students

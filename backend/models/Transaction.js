@@ -107,12 +107,22 @@ const transactionSchema = new mongoose.Schema(
     receiptNumber: {
       type: String,
       unique: true,
+      sparse: true,
+      trim: true,
     },
 
     notes: {
       type: String,
       default: "",
       trim: true,
+    },
+
+    // For expense proof/evidence.
+    // Store only relative/internal path or filename.
+    // Do not expose this as public static URL.
+    evidenceUrl: {
+      type: String,
+      default: null,
     },
 
     deleted: {
@@ -126,6 +136,8 @@ const transactionSchema = new mongoose.Schema(
 transactionSchema.index({ center: 1, date: -1 });
 transactionSchema.index({ center: 1, source: 1 });
 transactionSchema.index({ center: 1, category: 1 });
+transactionSchema.index({ center: 1, type: 1, date: -1 });
+transactionSchema.index({ center: 1, month: 1 });
 
 transactionSchema.pre("save", async function (next) {
   if (!this.receiptNumber) {

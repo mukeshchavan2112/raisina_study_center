@@ -3,7 +3,21 @@ import Hostel from "../models/Hostel.js";
 import Student from "../models/Student.js";
 import HostelAllocation from "../models/HostelAllocation.js";
 import { sendSuccess, sendError } from "../utils/responseHandler.js";
-import { resolveCenterScope, ensureCenterScope } from "../utils/accessControl.js";
+import {
+  resolveCenterScope,
+  ensureCenterScope,
+} from "../utils/accessControl.js";
+
+const parsePositiveInteger = (value) => {
+  const parsed = parseInt(value, 10);
+  return Number.isNaN(parsed) || parsed < 1 ? null : parsed;
+};
+
+const parseOptionalMoney = (value, fallback = 0) => {
+  if (value === undefined || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) || parsed < 0 ? fallback : parsed;
+};
 
 // GET /api/hostels?centerId=
 export const getHostels = asyncHandler(async (req, res) => {
@@ -20,7 +34,6 @@ export const getHostels = asyncHandler(async (req, res) => {
 });
 
 // GET /api/hostels/eligible-students
-// Students who selected hostel facility during admission
 export const getEligibleHostelStudents = asyncHandler(async (req, res) => {
   const centerId = resolveCenterScope(req, req.query.centerId);
 
@@ -86,9 +99,17 @@ export const createHostel = asyncHandler(async (req, res) => {
     return sendError(res, 400, "centerId required");
   }
 
-  const { name, type, address, totalRooms, bedsPerRoom, monthlyFee } = req.body;
+  const {
+    name,
+    type,
+    address,
+    totalRooms,
+    bedsPerRoom,
+    capacity,
+    monthlyFee,
+  } = req.body;
 
-  if (!name || !type || !totalRooms || !bedsPerRoom) {
+  if (!name || !type || totalRooms === undefined || bedsPerRoom === undefined) {
     return sendError(
       res,
       400,
@@ -96,17 +117,36 @@ export const createHostel = asyncHandler(async (req, res) => {
     );
   }
 
-  const capacity = parseInt(totalRooms) * parseInt(bedsPerRoom);
+  const parsedTotalRooms = parsePositiveInteger(totalRooms);
+  const parsedBedsPerRoom = parsePositiveInteger(bedsPerRoom);
+
+  if (!parsedTotalRooms || !parsedBedsPerRoom) {
+    return sendError(
+      res,
+      400,
+      "totalRooms and bedsPerRoom must be valid positive numbers"
+    );
+  }
+
+  let finalCapacity = parsedTotalRooms * parsedBedsPerRoom;
+
+  if (capacity !== undefined && capacity !== "") {
+    const parsedCapacity = parsePositiveInteger(capacity);
+    if (!parsedCapacity) {
+      return sendError(res, 400, "Capacity must be a valid positive number");
+    }
+    finalCapacity = parsedCapacity;
+  }
 
   const hostel = await Hostel.create({
     name,
     type,
     address,
-    totalRooms,
-    bedsPerRoom,
-    capacity,
+    totalRooms: parsedTotalRooms,
+    bedsPerRoom: parsedBedsPerRoom,
+    capacity: finalCapacity,
     occupancy: 0,
-    monthlyFee: Number(monthlyFee) || 0,
+    monthlyFee: parseOptionalMoney(monthlyFee, 0),
     center: centerId,
   });
 
@@ -124,26 +164,68 @@ export const updateHostel = asyncHandler(async (req, res) => {
 
   ensureCenterScope(req, hostel.center);
 
-  const { name, type, address, totalRooms, bedsPerRoom, monthlyFee } = req.body;
+  const {
+    name,
+    type,
+    address,
+    totalRooms,
+    bedsPerRoom,
+    monthlyFee,
+    capacity,
+  } = req.body;
 
-  if (name) hostel.name = name;
-  if (type) hostel.type = type;
+  if (name !== undefined) hostel.name = name;
+  if (type !== undefined) hostel.type = type;
   if (address !== undefined) hostel.address = address;
-  if (monthlyFee !== undefined) hostel.monthlyFee = Number(monthlyFee) || 0;
 
-  if (totalRooms) hostel.totalRooms = parseInt(totalRooms);
-  if (bedsPerRoom) hostel.bedsPerRoom = parseInt(bedsPerRoom);
+  if (monthlyFee !== undefined && monthlyFee !== "") {
+    hostel.monthlyFee = parseOptionalMoney(monthlyFee, hostel.monthlyFee || 0);
+  }
 
-  if (totalRooms || bedsPerRoom) {
-    hostel.capacity = hostel.totalRooms * hostel.bedsPerRoom;
+  let roomOrBedChanged = false;
 
-    if (hostel.occupancy > hostel.capacity) {
+  if (totalRooms !== undefined && totalRooms !== "") {
+    const parsedTotalRooms = parsePositiveInteger(totalRooms);
+    if (!parsedTotalRooms) {
+      return sendError(res, 400, "Total rooms must be a valid positive number");
+    }
+
+    hostel.totalRooms = parsedTotalRooms;
+    roomOrBedChanged = true;
+  }
+
+  if (bedsPerRoom !== undefined && bedsPerRoom !== "") {
+    const parsedBedsPerRoom = parsePositiveInteger(bedsPerRoom);
+    if (!parsedBedsPerRoom) {
       return sendError(
         res,
         400,
-        "New capacity cannot be less than current occupancy"
+        "Beds per room must be a valid positive number"
       );
     }
+
+    hostel.bedsPerRoom = parsedBedsPerRoom;
+    roomOrBedChanged = true;
+  }
+
+  if (capacity !== undefined && capacity !== "") {
+    const parsedCapacity = parsePositiveInteger(capacity);
+
+    if (!parsedCapacity) {
+      return sendError(res, 400, "Capacity must be a valid positive number");
+    }
+
+    hostel.capacity = parsedCapacity;
+  } else if (roomOrBedChanged) {
+    hostel.capacity = Number(hostel.totalRooms || 0) * Number(hostel.bedsPerRoom || 0);
+  }
+
+  if (hostel.occupancy > hostel.capacity) {
+    return sendError(
+      res,
+      400,
+      "New capacity cannot be less than current occupancy"
+    );
   }
 
   await hostel.save();
@@ -172,7 +254,9 @@ export const deleteHostel = asyncHandler(async (req, res) => {
     return sendError(
       res,
       400,
-      `Cannot delete hostel with ${activeAllocations || hostel.occupancy} students assigned. Deallocate them first.`
+      `Cannot delete hostel with ${
+        activeAllocations || hostel.occupancy
+      } students assigned. Deallocate them first.`
     );
   }
 
@@ -183,7 +267,7 @@ export const deleteHostel = asyncHandler(async (req, res) => {
 });
 
 // POST /api/hostels/:id/allocate
-// Body: { studentId, roomNumber, bedNumber, joiningDate, monthlyFee, remarks }
+// Body: { studentId, roomNumber, bedNumber, joiningDate, startDate, endDate, remarks }
 export const allocateStudent = asyncHandler(async (req, res) => {
   const hostel = await Hostel.findOne({
     _id: req.params.id,
@@ -199,6 +283,8 @@ export const allocateStudent = asyncHandler(async (req, res) => {
     roomNumber,
     bedNumber,
     joiningDate,
+    startDate,
+    endDate,
     monthlyFee,
     remarks,
   } = req.body;
@@ -274,16 +360,38 @@ export const allocateStudent = asyncHandler(async (req, res) => {
     return sendError(res, 400, "This room and bed is already occupied");
   }
 
+  const finalStartDate = startDate
+    ? new Date(startDate)
+    : joiningDate
+      ? new Date(joiningDate)
+      : new Date();
+
+  const finalEndDate = endDate ? new Date(endDate) : null;
+
+  if (Number.isNaN(finalStartDate.getTime())) {
+    return sendError(res, 400, "Invalid start date");
+  }
+
+  if (finalEndDate && Number.isNaN(finalEndDate.getTime())) {
+    return sendError(res, 400, "Invalid end date");
+  }
+
+  if (finalEndDate && finalEndDate < finalStartDate) {
+    return sendError(res, 400, "End date cannot be before start date");
+  }
+
   const allocation = await HostelAllocation.create({
     center: hostel.center,
     hostel: hostel._id,
     student: student._id,
     roomNumber: roomNumber.trim(),
     bedNumber: bedNumber.trim(),
-    joiningDate: joiningDate || Date.now(),
+    joiningDate: joiningDate ? new Date(joiningDate) : finalStartDate,
+    startDate: finalStartDate,
+    endDate: finalEndDate,
     monthlyFee:
       monthlyFee !== undefined && monthlyFee !== ""
-        ? Number(monthlyFee)
+        ? parseOptionalMoney(monthlyFee, 0)
         : hostel.monthlyFee || 0,
     remarks,
     status: "ACTIVE",
@@ -390,4 +498,119 @@ export const getHostelStudents = asyncHandler(async (req, res) => {
     .sort("roomNumber bedNumber");
 
   return sendSuccess(res, 200, "Hostel students fetched", allocations);
+});
+
+// POST /api/hostels/allocations/:id/renew
+// Body: { startDate, endDate }
+export const renewHostelAllocation = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { startDate, endDate } = req.body;
+
+  if (!startDate || !endDate) {
+    return sendError(res, 400, "startDate and endDate are required");
+  }
+
+  const parsedStartDate = new Date(startDate);
+  const parsedEndDate = new Date(endDate);
+
+  if (
+    Number.isNaN(parsedStartDate.getTime()) ||
+    Number.isNaN(parsedEndDate.getTime())
+  ) {
+    return sendError(res, 400, "Invalid renewal dates");
+  }
+
+  if (parsedEndDate < parsedStartDate) {
+    return sendError(res, 400, "End date cannot be before start date");
+  }
+
+  const allocation = await HostelAllocation.findOne({
+    _id: id,
+    deleted: false,
+  });
+
+  if (!allocation) {
+    return sendError(res, 404, "Hostel allocation not found");
+  }
+
+  ensureCenterScope(req, allocation.center);
+
+  const hostel = await Hostel.findOne({
+    _id: allocation.hostel,
+    deleted: false,
+  });
+
+  if (!hostel) {
+    return sendError(res, 404, "Hostel not found");
+  }
+
+  const student = await Student.findOne({
+    _id: allocation.student,
+    deleted: false,
+  });
+
+  if (!student) {
+    return sendError(res, 404, "Student not found");
+  }
+
+  ensureCenterScope(req, student.center);
+
+  const oldStatus = allocation.status;
+
+  if (oldStatus !== "ACTIVE") {
+    const existingActiveAllocation = await HostelAllocation.findOne({
+      student: student._id,
+      status: "ACTIVE",
+      deleted: false,
+      _id: { $ne: allocation._id },
+    });
+
+    if (existingActiveAllocation) {
+      return sendError(
+        res,
+        400,
+        "Student already has another active hostel allocation"
+      );
+    }
+
+    if (
+      student.hostel &&
+      student.hostel.toString() !== allocation.hostel.toString()
+    ) {
+      return sendError(
+        res,
+        400,
+        "Student is already linked with another hostel"
+      );
+    }
+
+    if (hostel.occupancy >= hostel.capacity) {
+      return sendError(res, 400, "Hostel is at full capacity. Cannot renew.");
+    }
+
+    hostel.occupancy += 1;
+    await hostel.save();
+  }
+
+  allocation.startDate = parsedStartDate;
+  allocation.endDate = parsedEndDate;
+  allocation.status = "ACTIVE";
+
+  student.hostel = hostel._id;
+
+  await Promise.all([allocation.save(), student.save()]);
+
+  const populatedAllocation = await HostelAllocation.findById(allocation._id)
+    .populate("hostel", "name type")
+    .populate(
+      "student",
+      "studentName rscNumber prn studentType mobileNumber facilities"
+    );
+
+  return sendSuccess(
+    res,
+    200,
+    "Hostel membership renewed successfully",
+    populatedAllocation
+  );
 });

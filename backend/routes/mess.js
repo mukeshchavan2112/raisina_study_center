@@ -12,6 +12,7 @@ import {
   getMessStudents,
   getEligibleMessStudents,
   getMessEnrollments,
+  renewMessEnrollment,
 } from "../controllers/mess.js";
 
 const router = Router();
@@ -22,6 +23,7 @@ router.use(authorizeRoles("CENTER_ADMIN"));
 // Keep these before "/:id"
 router.get("/eligible-students", getEligibleMessStudents);
 router.get("/enrollments", getMessEnrollments);
+router.post("/enrollments/:id/renew", renewMessEnrollment);
 
 router.get("/", getMesses);
 router.get("/:id", getMessById);

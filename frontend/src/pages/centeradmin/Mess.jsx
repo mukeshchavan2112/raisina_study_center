@@ -1,6 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import API from "../../api/api";
 
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 23, 42, 0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 9999,
+  padding: "20px",
+};
+
+const modalCardStyle = {
+  width: "100%",
+  maxWidth: "620px",
+  background: "#ffffff",
+  borderRadius: "22px",
+  padding: "24px",
+  boxShadow: "0 24px 80px rgba(15, 23, 42, 0.35)",
+  border: "1px solid #e5e7eb",
+};
+
 function Mess() {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -14,19 +35,28 @@ function Mess() {
   const [enrollmentForm, setEnrollmentForm] = useState({
     planType: "MONTHLY",
     startDate: "",
-    monthlyFee: "",
+    endDate: "",
   });
 
   const [messForm, setMessForm] = useState({
     messName: "",
     address: "",
     capacity: "",
-    monthlyFee: "",
+    status: "ACTIVE",
+  });
+
+  const [editingMessId, setEditingMessId] = useState(null);
+
+  const [renewRecord, setRenewRecord] = useState(null);
+  const [renewForm, setRenewForm] = useState({
+    startDate: "",
+    endDate: "",
   });
 
   const [loading, setLoading] = useState(true);
   const [savingMess, setSavingMess] = useState(false);
   const [savingEnrollment, setSavingEnrollment] = useState(false);
+  const [savingRenewal, setSavingRenewal] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -55,11 +85,55 @@ function Mess() {
 
   const formatDate = (date) => {
     if (!date) return "-";
-    return new Date(date).toLocaleDateString("en-IN");
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "-";
+
+    return parsed.toLocaleDateString("en-IN");
   };
 
-  const formatCurrency = (amount) => {
-    return `₹ ${Number(amount || 0).toLocaleString("en-IN")}`;
+  const toInputDate = (date) => {
+    if (!date) return "";
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    return parsed.toISOString().slice(0, 10);
+  };
+
+  const getNextDayInputDate = (date) => {
+    if (!date) return "";
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    parsed.setDate(parsed.getDate() + 1);
+
+    return parsed.toISOString().slice(0, 10);
+  };
+
+  const isExpired = (endDate) => {
+    if (!endDate) return false;
+
+    const end = new Date(endDate);
+    if (Number.isNaN(end.getTime())) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+
+    return end < today;
+  };
+
+  const getDisplayStatus = (record) => {
+    if (record.status === "ACTIVE" && isExpired(record.endDate)) {
+      return "EXPIRED";
+    }
+
+    return record.status || "-";
   };
 
   const fetchMessData = async () => {
@@ -81,7 +155,7 @@ function Mess() {
       console.error("Mess data fetch error:", err);
       setError(
         err.response?.data?.message ||
-          "Unable to load mess data. Please check backend connection."
+          "Unable to load mess data. Please check backend connection.",
       );
     } finally {
       setLoading(false);
@@ -109,7 +183,7 @@ function Mess() {
 
   const selectedStudent = useMemo(() => {
     return messStudents.find(
-      (student) => String(student._id) === String(selectedStudentId)
+      (student) => String(student._id) === String(selectedStudentId),
     );
   }, [messStudents, selectedStudentId]);
 
@@ -120,11 +194,15 @@ function Mess() {
   const occupiedSeats = activeEnrollments.length;
   const availableSeats = Math.max(totalCapacity - occupiedSeats, 0);
 
+  const expiredEnrollments = useMemo(() => {
+    return activeEnrollments.filter((record) => isExpired(record.endDate));
+  }, [activeEnrollments]);
+
   const selectedMessOccupied = useMemo(() => {
     if (!selectedMessId) return 0;
 
     return activeEnrollments.filter(
-      (record) => String(getId(record.mess)) === String(selectedMessId)
+      (record) => String(getId(record.mess)) === String(selectedMessId),
     ).length;
   }, [activeEnrollments, selectedMessId]);
 
@@ -135,15 +213,7 @@ function Mess() {
   const recentEnrollments = activeEnrollments.slice(0, 5);
 
   const handleMessSelect = (e) => {
-    const messId = e.target.value;
-    setSelectedMessId(messId);
-
-    const mess = messes.find((item) => String(item._id) === String(messId));
-
-    setEnrollmentForm((prev) => ({
-      ...prev,
-      monthlyFee: mess?.monthlyFee || "",
-    }));
+    setSelectedMessId(e.target.value);
   };
 
   const handleEnrollmentChange = (e) => {
@@ -160,22 +230,41 @@ function Mess() {
     }));
   };
 
+  const handleRenewChange = (e) => {
+    setRenewForm((prev) => ({
+      ...prev,
+      [e.target.name]: e.target.value,
+    }));
+  };
+
   const resetEnrollmentForm = () => {
     setSelectedMessId("");
     setSelectedStudentId("");
     setEnrollmentForm({
       planType: "MONTHLY",
       startDate: "",
-      monthlyFee: "",
+      endDate: "",
     });
   };
 
   const resetMessForm = () => {
+    setEditingMessId(null);
     setMessForm({
       messName: "",
       address: "",
       capacity: "",
-      monthlyFee: "",
+      status: "ACTIVE",
+    });
+  };
+
+  const handleEditMess = (mess) => {
+    setEditingMessId(mess._id);
+
+    setMessForm({
+      messName: mess.messName || "",
+      address: mess.address || "",
+      capacity: mess.capacity || "",
+      status: mess.status || "ACTIVE",
     });
   };
 
@@ -191,7 +280,6 @@ function Mess() {
         messName: messForm.messName,
         address: messForm.address,
         capacity: messForm.capacity,
-        monthlyFee: messForm.monthlyFee,
       });
 
       setMessage("Mess created successfully.");
@@ -200,6 +288,34 @@ function Mess() {
     } catch (err) {
       console.error("Create mess error:", err);
       setError(err.response?.data?.message || "Unable to create mess.");
+    } finally {
+      setSavingMess(false);
+    }
+  };
+
+  const handleUpdateMess = async (e) => {
+    e.preventDefault();
+
+    if (!editingMessId) return;
+
+    try {
+      setSavingMess(true);
+      setError("");
+      setMessage("");
+
+      await API.put(`/messes/${editingMessId}`, {
+        messName: messForm.messName,
+        address: messForm.address,
+        capacity: messForm.capacity,
+        status: messForm.status,
+      });
+
+      setMessage("Mess details updated successfully.");
+      resetMessForm();
+      fetchMessData();
+    } catch (err) {
+      console.error("Update mess error:", err);
+      setError(err.response?.data?.message || "Unable to update mess.");
     } finally {
       setSavingMess(false);
     }
@@ -218,6 +334,11 @@ function Mess() {
       return;
     }
 
+    if (!enrollmentForm.startDate || !enrollmentForm.endDate) {
+      setError("Please select from date and end date.");
+      return;
+    }
+
     try {
       setSavingEnrollment(true);
       setError("");
@@ -227,7 +348,7 @@ function Mess() {
         studentId: selectedStudentId,
         planType: enrollmentForm.planType,
         startDate: enrollmentForm.startDate,
-        monthlyFee: enrollmentForm.monthlyFee,
+        endDate: enrollmentForm.endDate,
       });
 
       setMessage("Student enrolled in mess successfully.");
@@ -236,7 +357,7 @@ function Mess() {
     } catch (err) {
       console.error("Mess enroll error:", err);
       setError(
-        err.response?.data?.message || "Unable to enroll student in mess."
+        err.response?.data?.message || "Unable to enroll student in mess.",
       );
     } finally {
       setSavingEnrollment(false);
@@ -261,8 +382,60 @@ function Mess() {
     } catch (err) {
       console.error("Mess unenroll error:", err);
       setError(
-        err.response?.data?.message || "Unable to remove student from mess."
+        err.response?.data?.message || "Unable to remove student from mess.",
       );
+    }
+  };
+
+  const openRenewModal = (record) => {
+    setRenewRecord(record);
+
+    setRenewForm({
+      startDate: record.endDate
+        ? getNextDayInputDate(record.endDate)
+        : toInputDate(record.startDate),
+      endDate: "",
+    });
+  };
+
+  const closeRenewModal = () => {
+    setRenewRecord(null);
+    setRenewForm({
+      startDate: "",
+      endDate: "",
+    });
+  };
+
+  const handleRenewSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!renewRecord) return;
+
+    if (!renewForm.startDate || !renewForm.endDate) {
+      setError("Please select renewal from date and end date.");
+      return;
+    }
+
+    try {
+      setSavingRenewal(true);
+      setError("");
+      setMessage("");
+
+      await API.post(`/messes/enrollments/${renewRecord._id}/renew`, {
+        startDate: renewForm.startDate,
+        endDate: renewForm.endDate,
+      });
+
+      setMessage("Mess membership renewed successfully.");
+      closeRenewModal();
+      fetchMessData();
+    } catch (err) {
+      console.error("Mess renewal error:", err);
+      setError(
+        err.response?.data?.message || "Unable to renew mess membership.",
+      );
+    } finally {
+      setSavingRenewal(false);
     }
   };
 
@@ -272,8 +445,8 @@ function Mess() {
         <span className="page-tag">MESS MODULE</span>
         <h2>Mess Management</h2>
         <p>
-          Create mess records, enroll eligible students, and track active mess
-          capacity.
+          Create mess records, enroll eligible students, manage validity dates,
+          and renew mess memberships.
         </p>
       </section>
 
@@ -368,6 +541,12 @@ function Mess() {
                     description="Eligible students not yet enrolled"
                     value={unassignedStudents.length}
                   />
+
+                  <SummaryRow
+                    title="Expired Memberships"
+                    description="Active records whose end date has passed"
+                    value={expiredEnrollments.length}
+                  />
                 </div>
               </div>
 
@@ -426,12 +605,15 @@ function Mess() {
                           <h4>{record.student?.studentName || "Student"}</h4>
                           <p>
                             {record.mess?.messName || "Mess"} •{" "}
-                            {record.planType || "Plan"} • Started{" "}
-                            {formatDate(record.startDate)}
+                            {record.planType || "Plan"}
+                          </p>
+                          <p>
+                            Valid: {formatDate(record.startDate)} to{" "}
+                            {formatDate(record.endDate)}
                           </p>
                         </div>
 
-                        <strong>{record.status}</strong>
+                        <strong>{getDisplayStatus(record)}</strong>
                       </div>
                     ))}
                   </div>
@@ -471,32 +653,17 @@ function Mess() {
                       />
                     </div>
 
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Capacity</label>
-                        <input
-                          type="number"
-                          name="capacity"
-                          value={messForm.capacity}
-                          onChange={handleMessChange}
-                          placeholder="100"
-                          min="1"
-                          required
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label>Monthly Fee</label>
-                        <input
-                          type="number"
-                          name="monthlyFee"
-                          value={messForm.monthlyFee}
-                          onChange={handleMessChange}
-                          placeholder="₹"
-                          min="0"
-                          required
-                        />
-                      </div>
+                    <div className="form-group">
+                      <label>Capacity</label>
+                      <input
+                        type="number"
+                        name="capacity"
+                        value={messForm.capacity}
+                        onChange={handleMessChange}
+                        placeholder="Enter total mess capacity"
+                        min="1"
+                        required
+                      />
                     </div>
 
                     <button className="primary-btn" disabled={savingMess}>
@@ -506,7 +673,7 @@ function Mess() {
                 </div>
               </section>
 
-              <MessTable messes={messes} formatCurrency={formatCurrency} />
+              <MessTable messes={messes} onEdit={handleEditMess} />
             </>
           )}
 
@@ -516,7 +683,7 @@ function Mess() {
                 <div className="form-card">
                   <div className="form-card-header">
                     <h3>Enroll Student in Mess</h3>
-                    <p>Select mess, student, plan and monthly fee.</p>
+                    <p>Select mess, student, plan and membership validity.</p>
                   </div>
 
                   <form onSubmit={handleEnrollStudent}>
@@ -573,7 +740,8 @@ function Mess() {
                     {selectedStudent && (
                       <div className="info-card">
                         <p>
-                          <strong>Student:</strong> {selectedStudent.studentName}
+                          <strong>Student:</strong>{" "}
+                          {selectedStudent.studentName}
                         </p>
                         <p>
                           <strong>RSC No:</strong>{" "}
@@ -586,40 +754,41 @@ function Mess() {
                       </div>
                     )}
 
+                    <div className="form-group">
+                      <label>Plan Type</label>
+                      <select
+                        name="planType"
+                        value={enrollmentForm.planType}
+                        onChange={handleEnrollmentChange}
+                      >
+                        <option value="MONTHLY">Monthly</option>
+                        <option value="QUARTERLY">Quarterly</option>
+                        <option value="YEARLY">Yearly</option>
+                      </select>
+                    </div>
+
                     <div className="form-row">
                       <div className="form-group">
-                        <label>Plan Type</label>
-                        <select
-                          name="planType"
-                          value={enrollmentForm.planType}
-                          onChange={handleEnrollmentChange}
-                        >
-                          <option value="MONTHLY">Monthly</option>
-                          <option value="QUARTERLY">Quarterly</option>
-                          <option value="YEARLY">Yearly</option>
-                        </select>
-                      </div>
-
-                      <div className="form-group">
-                        <label>Start Date</label>
+                        <label>From Date</label>
                         <input
                           type="date"
                           name="startDate"
                           value={enrollmentForm.startDate}
                           onChange={handleEnrollmentChange}
+                          required
                         />
                       </div>
-                    </div>
 
-                    <div className="form-group">
-                      <label>Monthly Fee</label>
-                      <input
-                        type="number"
-                        name="monthlyFee"
-                        value={enrollmentForm.monthlyFee}
-                        onChange={handleEnrollmentChange}
-                        placeholder="₹"
-                      />
+                      <div className="form-group">
+                        <label>End Date</label>
+                        <input
+                          type="date"
+                          name="endDate"
+                          value={enrollmentForm.endDate}
+                          onChange={handleEnrollmentChange}
+                          required
+                        />
+                      </div>
                     </div>
 
                     <button
@@ -643,12 +812,156 @@ function Mess() {
               enrollments={enrollments}
               loading={loading}
               formatDate={formatDate}
-              formatCurrency={formatCurrency}
+              getDisplayStatus={getDisplayStatus}
               handleUnenroll={handleUnenroll}
+              openRenewModal={openRenewModal}
               refresh={fetchMessData}
             />
           )}
         </>
+      )}
+
+      {editingMessId && (
+        <div style={modalOverlayStyle}>
+          <div style={modalCardStyle}>
+            <div className="form-card-header">
+              <h3>Edit Mess Details</h3>
+              <p>Update mess name, address, capacity and status.</p>
+            </div>
+
+            <form onSubmit={handleUpdateMess}>
+              <div className="form-group">
+                <label>Mess Name</label>
+                <input
+                  name="messName"
+                  value={messForm.messName}
+                  onChange={handleMessChange}
+                  placeholder="Example: Main Mess"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Address</label>
+                <input
+                  name="address"
+                  value={messForm.address}
+                  onChange={handleMessChange}
+                  placeholder="Mess address"
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Capacity</label>
+                <input
+                  type="number"
+                  name="capacity"
+                  value={messForm.capacity}
+                  onChange={handleMessChange}
+                  placeholder="Enter total mess capacity"
+                  min="1"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Status</label>
+                <select
+                  name="status"
+                  value={messForm.status}
+                  onChange={handleMessChange}
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="INACTIVE">Inactive</option>
+                </select>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "flex-end",
+                  flexWrap: "wrap",
+                  marginTop: "18px",
+                }}
+              >
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={resetMessForm}
+                >
+                  Cancel
+                </button>
+
+                <button className="primary-btn" disabled={savingMess}>
+                  {savingMess ? "Updating..." : "Update Mess"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {renewRecord && (
+        <div style={modalOverlayStyle}>
+          <div style={modalCardStyle}>
+            <div className="form-card-header">
+              <h3>Renew Mess Membership</h3>
+              <p>
+                Update validity dates for{" "}
+                <strong>{renewRecord.student?.studentName || "student"}</strong>
+                .
+              </p>
+            </div>
+
+            <form onSubmit={handleRenewSubmit}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>New From Date</label>
+                  <input
+                    type="date"
+                    name="startDate"
+                    value={renewForm.startDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>New End Date</label>
+                  <input
+                    type="date"
+                    name="endDate"
+                    value={renewForm.endDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "flex-end",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={closeRenewModal}
+                >
+                  Cancel
+                </button>
+
+                <button className="primary-btn" disabled={savingRenewal}>
+                  {savingRenewal ? "Renewing..." : "Renew Membership"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -666,7 +979,7 @@ function SummaryRow({ title, description, value }) {
   );
 }
 
-function MessTable({ messes, formatCurrency }) {
+function MessTable({ messes, onEdit }) {
   return (
     <section className="table-card">
       <div className="table-header">
@@ -689,8 +1002,10 @@ function MessTable({ messes, formatCurrency }) {
                 <th>Mess Name</th>
                 <th>Address</th>
                 <th>Capacity</th>
-                <th>Monthly Fee</th>
+                <th>Occupancy</th>
+                <th>Available</th>
                 <th>Status</th>
+                <th>Action</th>
               </tr>
             </thead>
 
@@ -700,11 +1015,21 @@ function MessTable({ messes, formatCurrency }) {
                   <td>{mess.messName}</td>
                   <td>{mess.address || "-"}</td>
                   <td>{mess.capacity || 0}</td>
-                  <td>{formatCurrency(mess.monthlyFee)}</td>
+                  <td>{mess.occupancy || 0}</td>
+                  <td>{mess.availableSeats ?? "-"}</td>
                   <td>
                     <span className="table-role-badge">
                       {mess.status || "ACTIVE"}
                     </span>
+                  </td>
+                  <td>
+                    <button
+                      className="table-action-btn"
+                      type="button"
+                      onClick={() => onEdit(mess)}
+                    >
+                      Edit
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -729,7 +1054,9 @@ function PendingStudentsTable({ students }) {
       {students.length === 0 ? (
         <div className="empty-state">
           <h4>No pending mess students</h4>
-          <p>All eligible students are already enrolled or no one requested mess.</p>
+          <p>
+            All eligible students are already enrolled or no one requested mess.
+          </p>
         </div>
       ) : (
         <div className="responsive-table">
@@ -766,8 +1093,9 @@ function EnrollmentTable({
   enrollments,
   loading,
   formatDate,
-  formatCurrency,
+  getDisplayStatus,
   handleUnenroll,
+  openRenewModal,
   refresh,
 }) {
   return (
@@ -775,7 +1103,7 @@ function EnrollmentTable({
       <div className="table-header">
         <div>
           <h3>Mess Enrollment Records</h3>
-          <p>Active and stopped mess enrollments.</p>
+          <p>Active and stopped mess enrollments with validity dates.</p>
         </div>
 
         <button className="secondary-btn" onClick={refresh}>
@@ -812,39 +1140,60 @@ function EnrollmentTable({
                 <th>RSC No</th>
                 <th>Mess</th>
                 <th>Plan</th>
-                <th>Start Date</th>
-                <th>Monthly Fee</th>
+                <th>From Date</th>
+                <th>End Date</th>
                 <th>Status</th>
-                <th>Action</th>
+                <th>Actions</th>
               </tr>
             </thead>
 
             <tbody>
-              {enrollments.map((record) => (
-                <tr key={record._id}>
-                  <td>{record.student?.studentName || "-"}</td>
-                  <td>{record.student?.rscNumber || "-"}</td>
-                  <td>{record.mess?.messName || "-"}</td>
-                  <td>{record.planType || "-"}</td>
-                  <td>{formatDate(record.startDate)}</td>
-                  <td>{formatCurrency(record.monthlyFee)}</td>
-                  <td>
-                    <span className="table-role-badge">{record.status}</span>
-                  </td>
-                  <td>
-                    {record.status === "ACTIVE" ? (
-                      <button
-                        className="secondary-btn"
-                        onClick={() => handleUnenroll(record)}
+              {enrollments.map((record) => {
+                const displayStatus = getDisplayStatus(record);
+
+                return (
+                  <tr key={record._id}>
+                    <td>{record.student?.studentName || "-"}</td>
+                    <td>{record.student?.rscNumber || "-"}</td>
+                    <td>{record.mess?.messName || "-"}</td>
+                    <td>{record.planType || "-"}</td>
+                    <td>{formatDate(record.startDate)}</td>
+                    <td>{formatDate(record.endDate)}</td>
+                    <td>
+                      <span className="table-role-badge">{displayStatus}</span>
+                    </td>
+                    <td>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          flexWrap: "wrap",
+                        }}
                       >
-                        Stop
-                      </button>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
+                        <button
+                          className="table-action-btn"
+                          type="button"
+                          onClick={() => openRenewModal(record)}
+                        >
+                          Renew
+                        </button>
+
+                        {record.status === "ACTIVE" ? (
+                          <button
+                            className="secondary-btn"
+                            type="button"
+                            onClick={() => handleUnenroll(record)}
+                          >
+                            Stop
+                          </button>
+                        ) : (
+                          <span>-</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

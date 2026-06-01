@@ -50,7 +50,7 @@ function MeritListPage() {
       setError(
         err?.response?.data?.message ||
           err?.response?.data?.error ||
-          "Unable to fetch merit lists."
+          "Unable to fetch merit lists.",
       );
     } finally {
       setLoading(false);
@@ -70,7 +70,7 @@ function MeritListPage() {
       setError(
         err?.response?.data?.message ||
           err?.response?.data?.error ||
-          "Unable to fetch merit list details."
+          "Unable to fetch merit list details.",
       );
     }
   };
@@ -126,7 +126,7 @@ function MeritListPage() {
         "scholarshipCutoffRank",
         form.scholarshipCutoffRank === ""
           ? ""
-          : Number(form.scholarshipCutoffRank)
+          : Number(form.scholarshipCutoffRank),
       );
       payload.append("file", selectedFile);
 
@@ -151,7 +151,7 @@ function MeritListPage() {
         err?.response?.data?.message ||
           err?.response?.data?.error ||
           err?.message ||
-          "Merit list upload failed."
+          "Merit list upload failed.",
       );
     } finally {
       setUploading(false);
@@ -181,15 +181,15 @@ function MeritListPage() {
   const pageSummary = useMemo(() => {
     const totalEntries = lists.reduce(
       (sum, list) => sum + (list.entries?.length || list.totalEntries || 0),
-      0
+      0,
     );
 
     const listsWithCutoff = lists.filter(
-      (list) => list.scholarshipCutoffRank
+      (list) => list.scholarshipCutoffRank,
     ).length;
 
     const centersCovered = new Set(
-      lists.map((list) => getMeritListCenterId(list)).filter(Boolean)
+      lists.map((list) => getMeritListCenterId(list)).filter(Boolean),
     ).size;
 
     return {
@@ -206,7 +206,7 @@ function MeritListPage() {
     const linked = entries.filter((entry) => entry.registrationId).length;
     const unlinked = entries.length - linked;
     const admitted = entries.filter(
-      (entry) => entry.admissionStatus === "ADMITTED"
+      (entry) => entry.admissionStatus === "ADMITTED",
     ).length;
 
     return {
@@ -330,8 +330,9 @@ function MeritListPage() {
               />
 
               <p className="muted">
-                Supported formats: CSV, XLSX, XLS. Required columns: rank,
-                name, mobileNumber, registrationNumber, score.
+                Supported formats: CSV, XLSX, XLS. Download the registration
+                Excel from Exam Registrations, fill only Marks and Rank, then
+                upload the same file here.
               </p>
 
               {selectedFile && (
@@ -411,13 +412,17 @@ function MeritListPage() {
             <div className="list-stack">
               {filteredLists.map((list) => (
                 <button
-                  key={list._id || `${getMeritListCenterName(list)}-${list.year}`}
+                  key={
+                    list._id || `${getMeritListCenterName(list)}-${list.year}`
+                  }
                   type="button"
                   className={`list-item ${
                     selectedList?._id === list._id ? "active" : ""
                   }`}
                   onClick={() =>
-                    list._id ? fetchMeritListById(list._id) : setSelectedList(list)
+                    list._id
+                      ? fetchMeritListById(list._id)
+                      : setSelectedList(list)
                   }
                 >
                   <div>
@@ -509,7 +514,9 @@ function MeritListPage() {
 
                 <tbody>
                   {selectedList.entries?.map((entry) => (
-                    <tr key={`${entry.rank}-${entry.mobileNumber || entry.name}`}>
+                    <tr
+                      key={`${entry.rank}-${entry.mobileNumber || entry.name}`}
+                    >
                       <td>
                         <span className="table-role-badge">
                           {entry.rank || "-"}
@@ -563,7 +570,7 @@ function MeritListPage() {
                           className={`status-badge ${
                             getStudentType(
                               entry.rank,
-                              selectedList.scholarshipCutoffRank
+                              selectedList.scholarshipCutoffRank,
                             ) === "SCHOLARSHIP"
                               ? "info"
                               : "neutral"
@@ -572,8 +579,8 @@ function MeritListPage() {
                           {formatLabel(
                             getStudentType(
                               entry.rank,
-                              selectedList.scholarshipCutoffRank
-                            )
+                              selectedList.scholarshipCutoffRank,
+                            ),
                           )}
                         </span>
                       </td>
@@ -651,9 +658,7 @@ function getMeritListCenterCode(list) {
 function getStudentType(rank, cutoff) {
   if (!cutoff) return "CUTOFF_NOT_SET";
 
-  return Number(rank) <= Number(cutoff)
-    ? "SCHOLARSHIP"
-    : "NON_SCHOLARSHIP";
+  return Number(rank) <= Number(cutoff) ? "SCHOLARSHIP" : "NON_SCHOLARSHIP";
 }
 
 function formatLabel(value) {

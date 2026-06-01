@@ -9,7 +9,7 @@ import {
 const router = express.Router();
 
 router.use(protect);
-router.use(authorizeRoles("SUPER_ADMIN", "CENTER_ADMIN"));
+router.use(authorizeRoles("SUPER_ADMIN"));
 
 router.get("/", getExamRegistrations);
 router.get("/:id", getExamRegistrationById);

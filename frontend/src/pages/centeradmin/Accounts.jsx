@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import API from "../../api/api";
+import PaymentQrCard from "../../components/PaymentQrCard";
 
 const feeCategories = [
   { value: "ADMISSION_FEE", label: "Admission Fee" },
@@ -91,15 +92,27 @@ function Accounts() {
     date: "",
     paymentMode: "CASH",
     notes: "",
+    evidence: null,
+  });
+
+  const [ledgerMonth, setLedgerMonth] = useState(
+    new Date().toISOString().slice(0, 7),
+  );
+
+  const [monthlyLedger, setMonthlyLedger] = useState({
+    month: new Date().toISOString().slice(0, 7),
+    totalDeposits: 0,
+    totalExpenses: 0,
+    transactions: [],
   });
 
   const tabs = [
     { key: "overview", label: "Overview" },
-    { key: "fees", label: "Student Fees" },
-    { key: "deposits", label: "Donations / Deposits" },
+    { key: "fees", label: "Fee Collection" },
+    { key: "deposits", label: "Donations" },
     { key: "expenses", label: "Expenses" },
-    { key: "sheets", label: "Monthly Sheets" },
-    { key: "ledger", label: "General Ledger" },
+    { key: "monthlyLedger", label: "Monthly Ledger" },
+    { key: "reports", label: "Reports" },
   ];
 
   const getData = (res) => res?.data?.data ?? res?.data ?? {};
@@ -136,6 +149,7 @@ function Accounts() {
         receiptsRes,
         expensesRes,
         ledgerRes,
+        monthlyLedgerRes,
         depositSheetRes,
         expenditureSheetRes,
       ] = await Promise.all([
@@ -145,6 +159,7 @@ function Accounts() {
         API.get("/receipts"),
         API.get("/accounts/expenses"),
         API.get("/accounts/ledger"),
+        API.get(`/accounts/monthly-ledger?month=${ledgerMonth}`),
         API.get(`/accounts/reports/deposit-sheet?year=${year}`),
         API.get(`/accounts/reports/expenditure-sheet?year=${year}`),
       ]);
@@ -155,6 +170,7 @@ function Accounts() {
       const receiptsData = getData(receiptsRes);
       const expensesData = getData(expensesRes);
       const ledgerData = getData(ledgerRes);
+      const monthlyLedgerData = getData(monthlyLedgerRes);
 
       setStudents(toArray(studentsData, "students"));
       setStudentFees(toArray(feesData, "fees"));
@@ -167,8 +183,17 @@ function Accounts() {
           totalCredits: 0,
           totalDebits: 0,
           netBalance: 0,
-        }
+        },
       );
+      setMonthlyLedger({
+        month: monthlyLedgerData?.month || ledgerMonth,
+        totalDeposits: monthlyLedgerData?.totalDeposits || 0,
+        totalExpenses: monthlyLedgerData?.totalExpenses || 0,
+        transactions: toArray(
+          monthlyLedgerData?.transactions || [],
+          "transactions",
+        ),
+      });
 
       setDepositSheet(getData(depositSheetRes));
       setExpenditureSheet(getData(expenditureSheetRes));
@@ -183,7 +208,7 @@ function Accounts() {
   useEffect(() => {
     fetchAccountsData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year]);
+  }, [year, ledgerMonth]);
 
   const feeReceiptRows = useMemo(() => {
     return receipts.filter((receipt) => receipt.type === "STUDENT_FEE");
@@ -209,6 +234,10 @@ function Accounts() {
     };
   }, [ledgerSummary, feeReceiptRows, donationReceiptRows, expenses]);
 
+  const monthlyBalance =
+    Number(monthlyLedger.totalDeposits || 0) -
+    Number(monthlyLedger.totalExpenses || 0);
+
   const handleFeeChange = (e) => {
     setFeeForm((prev) => ({
       ...prev,
@@ -224,9 +253,11 @@ function Accounts() {
   };
 
   const handleExpenseChange = (e) => {
+    const { name, value, files, type } = e.target;
+
     setExpenseForm((prev) => ({
       ...prev,
-      [e.target.name]: e.target.value,
+      [name]: type === "file" ? files?.[0] || null : value,
     }));
   };
 
@@ -267,7 +298,7 @@ function Accounts() {
 
     try {
       const selectedStudent = students.find(
-        (student) => student._id === feeForm.studentId
+        (student) => student._id === feeForm.studentId,
       );
 
       await API.post("/accounts/student-fees", {
@@ -330,7 +361,8 @@ function Accounts() {
       await API.post("/receipts", {
         type: "DONATION",
         donorName: donationForm.donorName,
-        donorAddress: donationForm.donorAddress || donationForm.donorDesignation,
+        donorAddress:
+          donationForm.donorAddress || donationForm.donorDesignation,
         amount: Number(donationForm.amount),
         paymentMode: donationForm.paymentMode,
         purpose: donationForm.category,
@@ -338,7 +370,9 @@ function Accounts() {
         receiptDate: donationForm.date || new Date(),
       });
 
-      setMessage("Donation/deposit recorded and receipt generated successfully");
+      setMessage(
+        "Donation/deposit recorded and receipt generated successfully",
+      );
 
       setDonationForm({
         donorName: "",
@@ -355,7 +389,7 @@ function Accounts() {
     } catch (err) {
       console.error("Donation submit error:", err);
       setError(
-        err?.response?.data?.message || "Failed to record donation/deposit"
+        err?.response?.data?.message || "Failed to record donation/deposit",
       );
     }
   };
@@ -365,13 +399,23 @@ function Accounts() {
     resetAlerts();
 
     try {
-      await API.post("/accounts/expenses", {
-        paidTo: expenseForm.paidTo,
-        category: expenseForm.category,
-        amount: Number(expenseForm.amount),
-        date: expenseForm.date || new Date(),
-        paymentMode: expenseForm.paymentMode,
-        notes: expenseForm.notes,
+      const formData = new FormData();
+
+      formData.append("paidTo", expenseForm.paidTo);
+      formData.append("category", expenseForm.category);
+      formData.append("amount", Number(expenseForm.amount));
+      formData.append("date", expenseForm.date || new Date().toISOString());
+      formData.append("paymentMode", expenseForm.paymentMode);
+      formData.append("notes", expenseForm.notes);
+
+      if (expenseForm.evidence) {
+        formData.append("evidence", expenseForm.evidence);
+      }
+
+      await API.post("/accounts/expenses", formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
       });
 
       setMessage("Expense recorded successfully");
@@ -383,7 +427,10 @@ function Accounts() {
         date: "",
         paymentMode: "CASH",
         notes: "",
+        evidence: null,
       });
+
+      e.target.reset();
 
       fetchAccountsData();
     } catch (err) {
@@ -392,14 +439,40 @@ function Accounts() {
     }
   };
 
+  const handleViewEvidence = async (expenseId) => {
+    try {
+      resetAlerts();
+
+      const response = await API.get(
+        `/accounts/transactions/${expenseId}/evidence`,
+        {
+          responseType: "blob",
+        },
+      );
+
+      const blobUrl = window.URL.createObjectURL(response.data);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 1000 * 60);
+    } catch (err) {
+      console.error("Evidence view error:", err);
+      setError(
+        err?.response?.data?.message ||
+          "Failed to open evidence. It may not exist.",
+      );
+    }
+  };
+
   return (
     <div className="module-page">
       <section className="page-header-card">
         <span className="page-tag">ACCOUNTS MODULE</span>
-        <h2>Accounts & Receipts</h2>
+        <h2>Accounts</h2>
         <p>
-          Manage student fee receipts, donations/deposits, expenses, ledger and
-          monthly sheets.
+          Manage fee collection, donations, expenses, monthly ledger and
+          reports.
         </p>
       </section>
 
@@ -504,9 +577,16 @@ function Accounts() {
                   <button
                     className="secondary-btn"
                     type="button"
-                    onClick={() => setActiveTab("sheets")}
+                    onClick={() => setActiveTab("monthlyLedger")}
                   >
-                    View Monthly Sheets
+                    View Monthly Ledger
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    type="button"
+                    onClick={() => setActiveTab("reports")}
+                  >
+                    View Reports
                   </button>
                 </div>
               </div>
@@ -530,7 +610,10 @@ function Accounts() {
                   </div>
                 </div>
 
-                <MiniReceiptList items={overview.latestDeposits} type="donation" />
+                <MiniReceiptList
+                  items={overview.latestDeposits}
+                  type="donation"
+                />
               </div>
 
               <div className="panel-card wide-card">
@@ -541,19 +624,32 @@ function Accounts() {
                   </div>
                 </div>
 
-                <MiniReceiptList items={overview.latestExpenses} type="expense" />
+                <MiniReceiptList
+                  items={overview.latestExpenses}
+                  type="expense"
+                />
               </div>
             </section>
           )}
 
           {activeTab === "fees" && (
             <>
-              <section className="users-grid">
+              <section
+                className="users-grid"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) 360px",
+                  gap: "24px",
+                  alignItems: "start",
+                  width: "100%",
+                }}
+              >
                 <div className="form-card">
                   <div className="form-card-header">
                     <h3>Collect Student Fee</h3>
                     <p>
-                      Generate receipt for admission fee or student facility fee.
+                      Generate receipt for admission fee or student facility
+                      fee.
                     </p>
                   </div>
 
@@ -637,7 +733,7 @@ function Accounts() {
                     </div>
 
                     <div className="form-group">
-                      <label>Remarks</label>
+                      <label>Transaction ID / Remarks</label>
                       <input
                         name="notes"
                         value={feeForm.notes}
@@ -651,6 +747,8 @@ function Accounts() {
                     </button>
                   </form>
                 </div>
+
+                <PaymentQrCard title="Fee Payment QR Code" variant="study" />
               </section>
 
               <ReceiptTable
@@ -668,7 +766,16 @@ function Accounts() {
 
           {activeTab === "deposits" && (
             <>
-              <section className="users-grid">
+              <section
+                className="users-grid"
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) 360px",
+                  gap: "24px",
+                  alignItems: "start",
+                  width: "100%",
+                }}
+              >
                 <div className="form-card">
                   <div className="form-card-header">
                     <h3>Donation / Deposit</h3>
@@ -758,7 +865,7 @@ function Accounts() {
                     </div>
 
                     <div className="form-group">
-                      <label>Remarks</label>
+                      <label>Transaction ID / Remarks</label>
                       <input
                         name="notes"
                         value={donationForm.notes}
@@ -772,6 +879,8 @@ function Accounts() {
                     </button>
                   </form>
                 </div>
+
+                <PaymentQrCard title="Donation QR Code" variant="foundation" />
               </section>
 
               <ReceiptTable
@@ -875,6 +984,19 @@ function Accounts() {
                           placeholder="Optional notes"
                         />
                       </div>
+                      <div className="form-group">
+                        <label>Expense Evidence</label>
+                        <input
+                          type="file"
+                          name="evidence"
+                          accept="image/*,.pdf"
+                          onChange={handleExpenseChange}
+                        />
+                        <small>
+                          Optional: upload bill, receipt, invoice, PDF, or
+                          payment screenshot.
+                        </small>
+                      </div>
                     </div>
 
                     <button className="primary-btn" type="submit">
@@ -888,11 +1010,12 @@ function Accounts() {
                 rows={expenses}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
+                onViewEvidence={handleViewEvidence}
               />
             </>
           )}
 
-          {activeTab === "sheets" && (
+          {activeTab === "reports" && (
             <>
               <section className="users-grid">
                 <div className="form-card">
@@ -919,7 +1042,7 @@ function Accounts() {
                         type="button"
                         onClick={fetchAccountsData}
                       >
-                        Refresh Sheets
+                        Refresh Reports
                       </button>
                     </div>
                   </div>
@@ -965,12 +1088,65 @@ function Accounts() {
             </>
           )}
 
-          {activeTab === "ledger" && (
-            <LedgerTable
-              rows={ledger}
-              formatCurrency={formatCurrency}
-              formatDate={formatDate}
-            />
+          {activeTab === "monthlyLedger" && (
+            <>
+              <section className="users-grid">
+                <div className="form-card">
+                  <div className="form-card-header">
+                    <h3>Monthly Deposite & Expense Summary</h3>
+                    <p>
+                      Select a month to see total money received, total money
+                      spent, and the remaining balance.
+                    </p>
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Month</label>
+                      <input
+                        type="month"
+                        value={ledgerMonth}
+                        onChange={(e) => setLedgerMonth(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="dashboard-grid">
+                <div className="panel-card">
+                  <SummaryRow
+                    title="Total Deposits"
+                    description="Student fees, donations, and other income"
+                    value={formatCurrency(monthlyLedger.totalDeposits)}
+                  />
+                </div>
+
+                <div className="panel-card">
+                  <SummaryRow
+                    title="Total Expenses"
+                    description="All expenses recorded in this month"
+                    value={formatCurrency(monthlyLedger.totalExpenses)}
+                  />
+                </div>
+
+                <div className="panel-card">
+                  <SummaryRow
+                    title="Balance Amount"
+                    description="Total deposits minus total expenses"
+                    value={formatCurrency(monthlyBalance)}
+                  />
+                </div>
+              </section>
+
+              <LedgerTable
+                title="Monthly Transactions"
+                description={`Deposits and expenses for ${monthlyLedger.month}`}
+                rows={monthlyLedger.transactions || []}
+                formatCurrency={formatCurrency}
+                formatDate={formatDate}
+              />
+            </>
           )}
         </>
       )}
@@ -1079,7 +1255,9 @@ function ReceiptTable({
                           row.student?.name ||
                           "N/A"}
                       </td>
-                      <td>{row.rscNumber || row.student?.rscNumber || "N/A"}</td>
+                      <td>
+                        {row.rscNumber || row.student?.rscNumber || "N/A"}
+                      </td>
                     </>
                   ) : (
                     <>
@@ -1096,7 +1274,9 @@ function ReceiptTable({
                   <td>{row.category || row.purpose || "N/A"}</td>
                   <td>{formatCurrency(row.amount)}</td>
                   <td>{row.paymentMode || "N/A"}</td>
-                  <td>{formatDate(row.date || row.receiptDate || row.createdAt)}</td>
+                  <td>
+                    {formatDate(row.date || row.receiptDate || row.createdAt)}
+                  </td>
 
                   <td>
                     <button
@@ -1119,7 +1299,7 @@ function ReceiptTable({
   );
 }
 
-function ExpenseTable({ rows, formatCurrency, formatDate }) {
+function ExpenseTable({ rows, formatCurrency, formatDate, onViewEvidence }) {
   return (
     <section className="table-card">
       <div className="table-header">
@@ -1145,6 +1325,7 @@ function ExpenseTable({ rows, formatCurrency, formatDate }) {
                 <th>Mode</th>
                 <th>Date</th>
                 <th>Remarks</th>
+                <th>Evidence</th>
               </tr>
             </thead>
 
@@ -1157,6 +1338,19 @@ function ExpenseTable({ rows, formatCurrency, formatDate }) {
                   <td>{expense.paymentMode}</td>
                   <td>{formatDate(expense.date)}</td>
                   <td>{expense.notes || "N/A"}</td>
+                  <td>
+                    {expense.evidenceUrl ? (
+                      <button
+                        type="button"
+                        className="table-action-btn"
+                        onClick={() => onViewEvidence?.(expense._id)}
+                      >
+                        View Evidence
+                      </button>
+                    ) : (
+                      "N/A"
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -1232,13 +1426,19 @@ function MonthlySheetTable({
   );
 }
 
-function LedgerTable({ rows, formatCurrency, formatDate }) {
+function LedgerTable({
+  title = "General Ledger",
+  description = "All credit and debit transactions.",
+  rows,
+  formatCurrency,
+  formatDate,
+}) {
   return (
     <section className="table-card">
       <div className="table-header">
         <div>
-          <h3>General Ledger</h3>
-          <p>All credit and debit transactions.</p>
+          <h3>{title}</h3>
+          <p>{description}</p>
         </div>
       </div>
 

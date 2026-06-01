@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
+import branding from "../../config/branding";
 
 function getDashboardPath(role) {
   if (role === "SUPER_ADMIN") return "/super-admin/dashboard";
@@ -61,9 +62,15 @@ function Login() {
     <div className="login-page">
       <div className="login-left">
         <div className="login-brand">
-          <div className="login-logo">ERP</div>
+          <div className="login-logo">
+            <img
+              src={branding.primaryLogo}
+              alt="Raisina Study Center"
+              className="login-logo-img"
+            />
+          </div>
 
-          <h1>Study Center ERP</h1>
+          <h1>Raisina Study Center</h1>
 
           <p>
             A centralized system for managing centers, admissions, students,

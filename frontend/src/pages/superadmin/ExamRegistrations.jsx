@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import API from "../../api/api";
 import { useAuth } from "../../context/AuthContext";
 import PageHeader from "../../components/PageHeader";
@@ -22,8 +23,7 @@ function ExamRegistrations() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const canViewRegistrations =
-    user?.role === "SUPER_ADMIN" || user?.role === "CENTER_ADMIN";
+  const canViewRegistrations = user?.role === "SUPER_ADMIN";
 
   useEffect(() => {
     if (canViewRegistrations) {
@@ -146,14 +146,46 @@ function ExamRegistrations() {
     };
   }, [registrations]);
 
+  const downloadRegistrationExcel = () => {
+    if (!filteredRegistrations || filteredRegistrations.length === 0) {
+      alert("No registration records available to download.");
+      return;
+    }
+
+    const rows = filteredRegistrations.map((registration, index) => ({
+      "Sr No": index + 1,
+      "Registration Number": registration.registrationNumber || "",
+      "Full Name": registration.fullName || "",
+      "Mobile Number": registration.mobileNumber || "",
+      "Aadhaar Last 4": registration.aadhaarLast4
+        ? `XXXX-XXXX-${registration.aadhaarLast4}`
+        : "",
+      "Date of Birth": formatDate(registration.dob),
+      Address: registration.addressLine || "",
+      "Preferred Exam Center": getExamCenterName(registration),
+      "Preferred Admission Center": getAdmissionCenterName(registration),
+      Year: registration.year || filters.year || "",
+      Marks: "",
+      Rank: "",
+      Remarks: "",
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Exam Registrations");
+
+    XLSX.writeFile(
+      workbook,
+      `exam_registrations_${filters.year || new Date().getFullYear()}.xlsx`,
+    );
+  };
+
   if (!canViewRegistrations) {
     return (
       <div className="access-denied-card">
         <h2>Exam Registrations Locked</h2>
-        <p>
-          Your current role <strong>{user?.role || "UNKNOWN"}</strong> does not
-          have permission to view exam registrations.
-        </p>
+        <p>Only Super Admin can view public exam registration records.</p>
       </div>
     );
   }
@@ -310,6 +342,17 @@ function ExamRegistrations() {
               <strong>{registrations.length}</strong> registrations
             </p>
           </div>
+
+          {isSuperAdmin && (
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={downloadRegistrationExcel}
+              disabled={loading || filteredRegistrations.length === 0}
+            >
+              Download Excel Template
+            </button>
+          )}
         </div>
 
         {loading ? (
@@ -332,10 +375,10 @@ function ExamRegistrations() {
                   <th>Mobile</th>
                   <th>Exam Center</th>
                   <th>Admission Center</th>
+                  <th>Aadhaar</th>
+                  <th>DOB</th>
                   <th>Year</th>
                   <th>Status</th>
-                  <th>Rank</th>
-                  <th>Score</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -370,6 +413,14 @@ function ExamRegistrations() {
 
                     <td>{getAdmissionCenterName(registration)}</td>
 
+                    <td>
+                      {registration.aadhaarLast4
+                        ? `XXXX-XXXX-${registration.aadhaarLast4}`
+                        : "-"}
+                    </td>
+
+                    <td>{formatDate(registration.dob)}</td>
+
                     <td>{registration.year || "-"}</td>
 
                     <td>
@@ -381,10 +432,6 @@ function ExamRegistrations() {
                         {formatLabel(registration.status || "REGISTERED")}
                       </span>
                     </td>
-
-                    <td>{registration.meritRank || "-"}</td>
-
-                    <td>{registration.score ?? "-"}</td>
 
                     <td>
                       <button
@@ -449,8 +496,22 @@ function ExamRegistrations() {
               />
 
               <DetailItem
-                label="Email"
-                value={selectedRegistration.email || "N/A"}
+                label="Aadhaar"
+                value={
+                  selectedRegistration.aadhaarLast4
+                    ? `XXXX-XXXX-${selectedRegistration.aadhaarLast4}`
+                    : "N/A"
+                }
+              />
+
+              <DetailItem
+                label="Date of Birth"
+                value={formatDate(selectedRegistration.dob)}
+              />
+
+              <DetailItem
+                label="Address"
+                value={selectedRegistration.addressLine || "N/A"}
               />
 
               <DetailItem
@@ -466,21 +527,6 @@ function ExamRegistrations() {
               <DetailItem
                 label="Exam Year"
                 value={selectedRegistration.year || "N/A"}
-              />
-
-              <DetailItem
-                label="Merit Rank"
-                value={selectedRegistration.meritRank || "Not assigned"}
-              />
-
-              <DetailItem
-                label="Score"
-                value={
-                  selectedRegistration.score !== undefined &&
-                  selectedRegistration.score !== null
-                    ? selectedRegistration.score
-                    : "Not assigned"
-                }
               />
 
               <DetailItem

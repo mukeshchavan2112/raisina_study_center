@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import branding from "../config/branding";
 
 function Sidebar() {
   const { user } = useAuth();
@@ -82,10 +83,16 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <div className="brand-icon">ERP</div>
+        <div className="sidebar-logo-box">
+          <img
+            src={branding.primaryLogo}
+            alt="Raisina Study Center"
+            className="sidebar-logo-img"
+          />
+        </div>
 
         <div>
-          <h2>Study Center</h2>
+          <h2>{branding.organizationName || "Raisina Study Center"}</h2>
           <p>{isSuperAdmin ? "Super Admin Panel" : "Center Admin Panel"}</p>
         </div>
       </div>
@@ -106,8 +113,18 @@ function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <p>Study Center ERP</p>
-        <span>{formatRole(user?.role)}</span>
+        <div className="sidebar-footer-brand">
+          <img
+            src={branding.foundationLogo}
+            alt="Raisina Foundation"
+            className="sidebar-footer-logo"
+          />
+
+          <div>
+            <p>Raisina Study Center ERP</p>
+            <span>{formatRole(user?.role)}</span>
+          </div>
+        </div>
       </div>
     </aside>
   );

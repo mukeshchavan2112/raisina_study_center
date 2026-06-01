@@ -19,13 +19,87 @@ const toIdString = (value) => {
   return value.toString();
 };
 
+const normalizeColumnName = (value) => {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[\s_\-.]/g, "");
+};
+
+const getCellValue = (row, possibleKeys = []) => {
+  const normalizedRow = {};
+
+  Object.keys(row || {}).forEach((key) => {
+    normalizedRow[normalizeColumnName(key)] = row[key];
+  });
+
+  for (const key of possibleKeys) {
+    const normalizedKey = normalizeColumnName(key);
+
+    if (
+      normalizedRow[normalizedKey] !== undefined &&
+      normalizedRow[normalizedKey] !== null &&
+      String(normalizedRow[normalizedKey]).trim() !== ""
+    ) {
+      return normalizedRow[normalizedKey];
+    }
+  }
+
+  return "";
+};
+
+const toCleanText = (value) => {
+  return String(value || "").trim();
+};
+
+const toCleanNumber = (value) => {
+  if (value === undefined || value === null || String(value).trim() === "") {
+    return NaN;
+  }
+
+  return Number(String(value).replace(/[^\d.]/g, ""));
+};
+
 const normalizeMeritEntry = (entry) => {
+  const rank = getCellValue(entry, ["rank", "merit rank", "meritRank", "Rank"]);
+
+  const name = getCellValue(entry, [
+    "name",
+    "fullName",
+    "studentName",
+    "Full Name",
+    "Candidate",
+    "Candidate Name",
+  ]);
+
+  const mobileNumber = getCellValue(entry, [
+    "mobileNumber",
+    "mobile",
+    "phone",
+    "Mobile Number",
+    "Mobile No",
+  ]);
+
+  const registrationNumber = getCellValue(entry, [
+    "registrationNumber",
+    "Registration Number",
+    "Registration No",
+    "Reg No",
+  ]);
+
+  const score = getCellValue(entry, [
+    "score",
+    "marks",
+    "Marks",
+    "Score",
+    "Total Marks",
+  ]);
+
   return {
-    rank: Number(entry.rank),
-    name: entry.name || entry.fullName || entry.studentName,
-    mobileNumber: entry.mobileNumber || entry.phone || null,
-    registrationNumber: entry.registrationNumber || null,
-    score: Number(entry.score),
+    rank: toCleanNumber(rank),
+    name: toCleanText(name),
+    mobileNumber: toCleanText(mobileNumber) || null,
+    registrationNumber: toCleanText(registrationNumber) || null,
+    score: toCleanNumber(score),
   };
 };
 

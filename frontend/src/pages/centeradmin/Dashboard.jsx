@@ -219,8 +219,8 @@ function Dashboard() {
   return (
     <div className="page">
       <PageHeader
-        title="ERP Dashboard"
-        subtitle="Overview, facility analytics, accounts analytics and downloadable reports."
+        title="Center Dashboard"
+        subtitle="Manage admissions, facilities, accounts and reports for your center."
       />
 
       {error && <div className="alert warning">{error}</div>}
@@ -631,6 +631,7 @@ function Dashboard() {
                   </div>
                 </div>
               </div>
+
               <div className="panel-card wide-card">
                 <div className="panel-header">
                   <div>

@@ -1,6 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import API from "../../api/api";
 
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 23, 42, 0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 9999,
+  padding: "20px",
+};
+
+const modalCardStyle = {
+  width: "100%",
+  maxWidth: "620px",
+  background: "#ffffff",
+  borderRadius: "22px",
+  padding: "24px",
+  boxShadow: "0 24px 80px rgba(15, 23, 42, 0.35)",
+  border: "1px solid #e5e7eb",
+};
+
 function Library() {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -28,12 +49,20 @@ function Library() {
   const [selectedStudyStudentId, setSelectedStudyStudentId] = useState("");
 
   const [studyForm, setStudyForm] = useState({
-    joiningDate: "",
+    startDate: "",
+    endDate: "",
     seatNo: "",
-    monthlyFee: "",
     status: "ACTIVE",
     remarks: "",
   });
+
+  const [renewStudent, setRenewStudent] = useState(null);
+  const [renewForm, setRenewForm] = useState({
+    startDate: "",
+    endDate: "",
+  });
+
+  const [savingRenewal, setSavingRenewal] = useState(false);
 
   const tabs = [
     { key: "overview", label: "Overview" },
@@ -56,16 +85,58 @@ function Library() {
 
   const formatDate = (date) => {
     if (!date) return "N/A";
-    return new Date(date).toLocaleDateString("en-IN");
-  };
 
-  const formatCurrency = (amount) => {
-    return `₹${Number(amount || 0).toLocaleString("en-IN")}`;
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "N/A";
+
+    return parsed.toLocaleDateString("en-IN");
   };
 
   const toInputDate = (date) => {
     if (!date) return "";
-    return new Date(date).toISOString().split("T")[0];
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    return parsed.toISOString().split("T")[0];
+  };
+
+  const getNextDayInputDate = (date) => {
+    if (!date) return "";
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    parsed.setDate(parsed.getDate() + 1);
+
+    return parsed.toISOString().split("T")[0];
+  };
+
+  const isExpired = (endDate) => {
+    if (!endDate) return false;
+
+    const end = new Date(endDate);
+
+    if (Number.isNaN(end.getTime())) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+
+    return end < today;
+  };
+
+  const getStudyStatus = (student) => {
+    const profile = student?.libraryProfile || {};
+
+    if (profile.status === "ACTIVE" && isExpired(profile.endDate)) {
+      return "EXPIRED";
+    }
+
+    return profile.status || "ACTIVE";
   };
 
   const resetAlerts = () => {
@@ -105,6 +176,12 @@ function Library() {
     );
   }, [students]);
 
+  const expiredStudyStudents = useMemo(() => {
+    return assignedStudyStudents.filter((student) =>
+      isExpired(student.libraryProfile?.endDate)
+    );
+  }, [assignedStudyStudents]);
+
   const stats = useMemo(() => {
     const totalCopies = books.reduce(
       (sum, book) => sum + Number(book.totalCopies || 0),
@@ -129,13 +206,14 @@ function Library() {
     ).length;
 
     const activeStudyStudents = assignedStudyStudents.filter(
-      (student) => student.libraryProfile?.status === "ACTIVE"
+      (student) => getStudyStatus(student) === "ACTIVE"
     ).length;
 
     return {
       eligibleStudents: students.length,
       studySpaceStudents: assignedStudyStudents.length,
       activeStudyStudents,
+      expiredStudyStudents: expiredStudyStudents.length,
       bookTitles: books.length,
       totalCopies,
       availableBooks,
@@ -143,7 +221,7 @@ function Library() {
       overdueBooks,
       returnedBooks,
     };
-  }, [students, assignedStudyStudents, books, issues]);
+  }, [students, assignedStudyStudents, expiredStudyStudents, books, issues]);
 
   const recentIssues = issues.slice(0, 5);
 
@@ -176,14 +254,22 @@ function Library() {
     const profile = student?.libraryProfile || {};
 
     setStudyForm({
-      joiningDate: toInputDate(profile.joiningDate),
+      startDate: toInputDate(profile.startDate || profile.joiningDate),
+      endDate: toInputDate(profile.endDate),
       seatNo: profile.seatNo || "",
-      monthlyFee:
-        profile.monthlyFee !== undefined && profile.monthlyFee !== null
-          ? String(profile.monthlyFee)
-          : "",
       status: profile.status || "ACTIVE",
       remarks: profile.remarks || "",
+    });
+  };
+
+  const resetStudyForm = () => {
+    setSelectedStudyStudentId("");
+    setStudyForm({
+      startDate: "",
+      endDate: "",
+      seatNo: "",
+      status: "ACTIVE",
+      remarks: "",
     });
   };
 
@@ -224,26 +310,25 @@ function Library() {
       return;
     }
 
+    if (!studyForm.startDate || !studyForm.endDate) {
+      setError("Please select from date and end date");
+      return;
+    }
+
     try {
       await API.put(`/library/students/${selectedStudyStudentId}/study-space`, {
-        joiningDate: studyForm.joiningDate || null,
+        joiningDate: studyForm.startDate,
+        startDate: studyForm.startDate,
+        endDate: studyForm.endDate,
         seatNo: studyForm.seatNo,
-        monthlyFee: Number(studyForm.monthlyFee || 0),
         status: studyForm.status,
         remarks: studyForm.remarks,
+        libraryAccess: true,
       });
 
       setMessage("Study space student added/updated successfully");
 
-      setSelectedStudyStudentId("");
-      setStudyForm({
-        joiningDate: "",
-        seatNo: "",
-        monthlyFee: "",
-        status: "ACTIVE",
-        remarks: "",
-      });
-
+      resetStudyForm();
       fetchLibraryData();
     } catch (err) {
       console.error("Study space update error:", err);
@@ -331,13 +416,72 @@ function Library() {
     }
   };
 
+  const openRenewModal = (student) => {
+    const profile = student.libraryProfile || {};
+
+    setRenewStudent(student);
+    setRenewForm({
+      startDate: profile.endDate
+        ? getNextDayInputDate(profile.endDate)
+        : toInputDate(profile.startDate || profile.joiningDate),
+      endDate: "",
+    });
+  };
+
+  const closeRenewModal = () => {
+    setRenewStudent(null);
+    setRenewForm({
+      startDate: "",
+      endDate: "",
+    });
+  };
+
+  const handleRenewChange = (e) => {
+    setRenewForm((prev) => ({
+      ...prev,
+      [e.target.name]: e.target.value,
+    }));
+  };
+
+  const handleRenewSubmit = async (e) => {
+    e.preventDefault();
+    resetAlerts();
+
+    if (!renewStudent) return;
+
+    if (!renewForm.startDate || !renewForm.endDate) {
+      setError("Please select renewal from date and end date");
+      return;
+    }
+
+    try {
+      setSavingRenewal(true);
+
+      await API.put(`/library/students/${renewStudent._id}/renew`, {
+        startDate: renewForm.startDate,
+        endDate: renewForm.endDate,
+      });
+
+      setMessage("Study space membership renewed successfully");
+      closeRenewModal();
+      fetchLibraryData();
+    } catch (err) {
+      console.error("Renew study space error:", err);
+      setError(
+        err?.response?.data?.message || "Failed to renew study space membership"
+      );
+    } finally {
+      setSavingRenewal(false);
+    }
+  };
+
   return (
     <div className="module-page">
       <section className="page-header-card">
         <span className="page-tag">LIBRARY MODULE</span>
         <h2>Study Center Management</h2>
         <p>
-          Manage study space students, book stock, issue records and return
+          Manage study space memberships, book stock, issue records and return
           records in a cleaner tab-based view.
         </p>
       </section>
@@ -397,6 +541,12 @@ function Library() {
                     title="Active Students"
                     description="Currently active study space students"
                     value={stats.activeStudyStudents}
+                  />
+
+                  <SummaryRow
+                    title="Expired Memberships"
+                    description="Students whose end date has passed"
+                    value={stats.expiredStudyStudents}
                   />
                 </div>
               </div>
@@ -530,10 +680,10 @@ function Library() {
               <section className="users-grid">
                 <div className="form-card">
                   <div className="form-card-header">
-                    <h3>Add Study Space Student</h3>
+                    <h3>Student Allocatation</h3>
                     <p>
-                      Select a library-eligible student and assign seat, joining
-                      date and monthly fee.
+                      Select a library-eligible student and assign seat with
+                      membership validity dates.
                     </p>
                   </div>
 
@@ -554,55 +704,52 @@ function Library() {
                       </select>
                     </div>
 
+                    <div className="form-group">
+                      <label>Seat No / Table No</label>
+                      <input
+                        name="seatNo"
+                        value={studyForm.seatNo}
+                        onChange={handleStudyFormChange}
+                        placeholder="Example: A-12"
+                        required
+                      />
+                    </div>
+
                     <div className="form-row">
                       <div className="form-group">
-                        <label>Joining Date</label>
+                        <label>From Date</label>
                         <input
                           type="date"
-                          name="joiningDate"
-                          value={studyForm.joiningDate}
+                          name="startDate"
+                          value={studyForm.startDate}
                           onChange={handleStudyFormChange}
                           required
                         />
                       </div>
 
                       <div className="form-group">
-                        <label>Seat No / Table No</label>
+                        <label>End Date</label>
                         <input
-                          name="seatNo"
-                          value={studyForm.seatNo}
+                          type="date"
+                          name="endDate"
+                          value={studyForm.endDate}
                           onChange={handleStudyFormChange}
-                          placeholder="Example: A-12"
                           required
                         />
                       </div>
                     </div>
 
-                    <div className="form-row">
-                      <div className="form-group">
-                        <label>Monthly Fee</label>
-                        <input
-                          type="number"
-                          min="0"
-                          name="monthlyFee"
-                          value={studyForm.monthlyFee}
-                          onChange={handleStudyFormChange}
-                          placeholder="0"
-                        />
-                      </div>
-
-                      <div className="form-group">
-                        <label>Status</label>
-                        <select
-                          name="status"
-                          value={studyForm.status}
-                          onChange={handleStudyFormChange}
-                        >
-                          <option value="ACTIVE">Active</option>
-                          <option value="INACTIVE">Inactive</option>
-                          <option value="COMPLETED">Completed</option>
-                        </select>
-                      </div>
+                    <div className="form-group">
+                      <label>Status</label>
+                      <select
+                        name="status"
+                        value={studyForm.status}
+                        onChange={handleStudyFormChange}
+                      >
+                        <option value="ACTIVE">Active</option>
+                        <option value="INACTIVE">Inactive</option>
+                        <option value="COMPLETED">Completed</option>
+                      </select>
                     </div>
 
                     <div className="form-group">
@@ -626,7 +773,8 @@ function Library() {
               <StudySpaceTable
                 students={assignedStudyStudents}
                 formatDate={formatDate}
-                formatCurrency={formatCurrency}
+                getStudyStatus={getStudyStatus}
+                openRenewModal={openRenewModal}
                 refresh={fetchLibraryData}
               />
             </>
@@ -696,10 +844,7 @@ function Library() {
                 </div>
               </section>
 
-              <BooksTable
-                books={books}
-                handleDeleteBook={handleDeleteBook}
-              />
+              <BooksTable books={books} handleDeleteBook={handleDeleteBook} />
             </>
           )}
 
@@ -777,6 +922,67 @@ function Library() {
           )}
         </>
       )}
+
+      {renewStudent && (
+        <div style={modalOverlayStyle}>
+          <div style={modalCardStyle}>
+            <div className="form-card-header">
+              <h3>Renew Study Space Membership</h3>
+              <p>
+                Update validity dates for{" "}
+                <strong>{renewStudent.studentName || "student"}</strong>.
+              </p>
+            </div>
+
+            <form onSubmit={handleRenewSubmit}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>New From Date</label>
+                  <input
+                    type="date"
+                    name="startDate"
+                    value={renewForm.startDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>New End Date</label>
+                  <input
+                    type="date"
+                    name="endDate"
+                    value={renewForm.endDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "flex-end",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={closeRenewModal}
+                >
+                  Cancel
+                </button>
+
+                <button className="primary-btn" disabled={savingRenewal}>
+                  {savingRenewal ? "Renewing..." : "Renew Membership"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -793,7 +999,13 @@ function SummaryRow({ title, description, value }) {
   );
 }
 
-function StudySpaceTable({ students, formatDate, formatCurrency, refresh }) {
+function StudySpaceTable({
+  students,
+  formatDate,
+  getStudyStatus,
+  openRenewModal,
+  refresh,
+}) {
   return (
     <section className="table-card">
       <div className="table-header">
@@ -822,11 +1034,12 @@ function StudySpaceTable({ students, formatDate, formatCurrency, refresh }) {
                 <th>RSC No</th>
                 <th>Student Name</th>
                 <th>Mobile</th>
-                <th>Joining Date</th>
                 <th>Seat No</th>
-                <th>Monthly Fee</th>
+                <th>From Date</th>
+                <th>End Date</th>
                 <th>Status</th>
                 <th>Remarks</th>
+                <th>Action</th>
               </tr>
             </thead>
 
@@ -836,15 +1049,29 @@ function StudySpaceTable({ students, formatDate, formatCurrency, refresh }) {
                   <td>{student.rscNumber}</td>
                   <td>{student.studentName}</td>
                   <td>{student.mobileNumber || "N/A"}</td>
-                  <td>{formatDate(student.libraryProfile?.joiningDate)}</td>
                   <td>{student.libraryProfile?.seatNo || "N/A"}</td>
-                  <td>{formatCurrency(student.libraryProfile?.monthlyFee)}</td>
+                  <td>
+                    {formatDate(
+                      student.libraryProfile?.startDate ||
+                        student.libraryProfile?.joiningDate
+                    )}
+                  </td>
+                  <td>{formatDate(student.libraryProfile?.endDate)}</td>
                   <td>
                     <span className="table-role-badge">
-                      {student.libraryProfile?.status || "ACTIVE"}
+                      {getStudyStatus(student)}
                     </span>
                   </td>
                   <td>{student.libraryProfile?.remarks || "N/A"}</td>
+                  <td>
+                    <button
+                      className="table-action-btn"
+                      type="button"
+                      onClick={() => openRenewModal(student)}
+                    >
+                      Renew
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -965,8 +1192,7 @@ function IssueReturnTable({
                     <span className="table-role-badge">{issue.status}</span>
                   </td>
                   <td>
-                    {issue.status === "ISSUED" ||
-                    issue.status === "OVERDUE" ? (
+                    {issue.status === "ISSUED" || issue.status === "OVERDUE" ? (
                       <button
                         className="primary-btn"
                         onClick={() => handleReturnBook(issue._id)}

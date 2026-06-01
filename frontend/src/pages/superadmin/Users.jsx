@@ -14,6 +14,7 @@ function Users() {
     email: "",
     password: "",
     centerId: "",
+    aadharNumber: "",
   });
 
   const [loading, setLoading] = useState(false);
@@ -145,6 +146,7 @@ function Users() {
       email: "",
       password: "",
       centerId: "",
+      aadharNumber: "",
     });
   };
 
@@ -180,13 +182,13 @@ function Users() {
         `/auth/center-admins/${getUserId(selectedAdminForReset)}/reset-password`,
         {
           newPassword,
-        }
+        },
       );
 
       setMessage(
         `Password reset successfully for ${getAdminName(
-          selectedAdminForReset
-        )}.`
+          selectedAdminForReset,
+        )}.`,
       );
 
       closeResetPasswordModal();
@@ -214,8 +216,16 @@ function Users() {
     setLastCreatedUser(null);
 
     const selectedCenterForSubmit = centers.find(
-      (center) => getCenterId(center) === formData.centerId
+      (center) => getCenterId(center) === formData.centerId,
     );
+
+    const cleanAadharNumber = formData.aadharNumber.replace(/\D/g, "");
+
+    if (!/^\d{12}$/.test(cleanAadharNumber)) {
+      setLoading(false);
+      setError("Aadhaar number must be exactly 12 digits.");
+      return;
+    }
 
     try {
       const payload = {
@@ -225,6 +235,7 @@ function Users() {
         role: "CENTER_ADMIN",
         centerId: formData.centerId,
         center: formData.centerId,
+        aadharNumber: cleanAadharNumber,
       };
 
       const response = await API.post("/auth/register", payload);
@@ -407,6 +418,27 @@ function Users() {
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>Aadhaar Number</label>
+              <input
+                type="text"
+                name="aadharNumber"
+                placeholder="Enter 12 digit Aadhaar number"
+                value={formData.aadharNumber}
+                onChange={handleChange}
+                maxLength="12"
+                inputMode="numeric"
+                pattern="\d{12}"
+                required
+              />
+              <small>
+                Aadhaar will be stored securely and will not be shown fully in
+                the system.
+              </small>
             </div>
           </div>
 
@@ -667,7 +699,9 @@ function getAdminCenterCode(admin) {
 }
 
 function getCenterName(center) {
-  return center?.centerName || center?.name || center?.title || "Unnamed Center";
+  return (
+    center?.centerName || center?.name || center?.title || "Unnamed Center"
+  );
 }
 
 function getCenterCode(center) {

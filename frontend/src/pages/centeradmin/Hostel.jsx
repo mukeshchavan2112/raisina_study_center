@@ -1,6 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import API from "../../api/api";
 
+const modalOverlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 23, 42, 0.55)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  zIndex: 9999,
+  padding: "20px",
+};
+
+const modalCardStyle = {
+  width: "100%",
+  maxWidth: "620px",
+  background: "#ffffff",
+  borderRadius: "22px",
+  padding: "24px",
+  boxShadow: "0 24px 80px rgba(15, 23, 42, 0.35)",
+  border: "1px solid #e5e7eb",
+};
+
 function Hostel() {
   const [activeTab, setActiveTab] = useState("overview");
 
@@ -14,8 +35,8 @@ function Hostel() {
   const [allocationForm, setAllocationForm] = useState({
     roomNumber: "",
     bedNumber: "",
-    joiningDate: "",
-    monthlyFee: "",
+    startDate: "",
+    endDate: "",
   });
 
   const [hostelForm, setHostelForm] = useState({
@@ -24,12 +45,20 @@ function Hostel() {
     address: "",
     totalRooms: "",
     bedsPerRoom: "",
-    monthlyFee: "",
+  });
+
+  const [editingHostelId, setEditingHostelId] = useState(null);
+
+  const [renewRecord, setRenewRecord] = useState(null);
+  const [renewForm, setRenewForm] = useState({
+    startDate: "",
+    endDate: "",
   });
 
   const [loading, setLoading] = useState(true);
   const [savingAllocation, setSavingAllocation] = useState(false);
   const [savingHostel, setSavingHostel] = useState(false);
+  const [savingRenewal, setSavingRenewal] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -58,11 +87,43 @@ function Hostel() {
 
   const formatDate = (date) => {
     if (!date) return "-";
-    return new Date(date).toLocaleDateString("en-IN");
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "-";
+
+    return parsed.toLocaleDateString("en-IN");
   };
 
-  const formatCurrency = (amount) => {
-    return `₹ ${Number(amount || 0).toLocaleString("en-IN")}`;
+  const toInputDate = (date) => {
+    if (!date) return "";
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) return "";
+
+    return parsed.toISOString().slice(0, 10);
+  };
+
+  const isExpired = (endDate) => {
+    if (!endDate) return false;
+
+    const end = new Date(endDate);
+    if (Number.isNaN(end.getTime())) return false;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+
+    return end < today;
+  };
+
+  const getDisplayStatus = (record) => {
+    if (record.status === "ACTIVE" && isExpired(record.endDate)) {
+      return "EXPIRED";
+    }
+
+    return record.status || "-";
   };
 
   const fetchHostelData = async () => {
@@ -84,7 +145,7 @@ function Hostel() {
       console.error("Hostel data fetch error:", err);
       setError(
         err.response?.data?.message ||
-          "Unable to load hostel data. Please check backend connection."
+          "Unable to load hostel data. Please check backend connection.",
       );
     } finally {
       setLoading(false);
@@ -108,31 +169,44 @@ function Hostel() {
 
   const selectedHostel = useMemo(() => {
     return hostels.find(
-      (hostel) => String(hostel._id) === String(selectedHostelId)
+      (hostel) => String(hostel._id) === String(selectedHostelId),
     );
   }, [hostels, selectedHostelId]);
 
   const selectedStudent = useMemo(() => {
     return hostelStudents.find(
-      (student) => String(student._id) === String(selectedStudentId)
+      (student) => String(student._id) === String(selectedStudentId),
     );
   }, [hostelStudents, selectedStudentId]);
+
+  const calculatedHostelCapacity = useMemo(() => {
+    const rooms = Number(hostelForm.totalRooms || 0);
+    const beds = Number(hostelForm.bedsPerRoom || 0);
+
+    if (!rooms || !beds) return 0;
+
+    return rooms * beds;
+  }, [hostelForm.totalRooms, hostelForm.bedsPerRoom]);
 
   const totalCapacity = useMemo(() => {
     return hostels.reduce(
       (sum, hostel) => sum + Number(hostel.capacity || 0),
-      0
+      0,
     );
   }, [hostels]);
 
   const occupiedBeds = activeAllocations.length;
   const availableBeds = Math.max(totalCapacity - occupiedBeds, 0);
 
+  const expiredAllocations = useMemo(() => {
+    return activeAllocations.filter((record) => isExpired(record.endDate));
+  }, [activeAllocations]);
+
   const selectedHostelOccupied = useMemo(() => {
     if (!selectedHostelId) return 0;
 
     return activeAllocations.filter(
-      (record) => String(getId(record.hostel)) === String(selectedHostelId)
+      (record) => String(getId(record.hostel)) === String(selectedHostelId),
     ).length;
   }, [activeAllocations, selectedHostelId]);
 
@@ -156,16 +230,15 @@ function Hostel() {
     }));
   };
 
-  const handleHostelSelect = (e) => {
-    const hostelId = e.target.value;
-    setSelectedHostelId(hostelId);
-
-    const hostel = hostels.find((item) => String(item._id) === String(hostelId));
-
-    setAllocationForm((prev) => ({
+  const handleRenewChange = (e) => {
+    setRenewForm((prev) => ({
       ...prev,
-      monthlyFee: hostel?.monthlyFee || "",
+      [e.target.name]: e.target.value,
     }));
+  };
+
+  const handleHostelSelect = (e) => {
+    setSelectedHostelId(e.target.value);
   };
 
   const resetAllocationForm = () => {
@@ -174,23 +247,35 @@ function Hostel() {
     setAllocationForm({
       roomNumber: "",
       bedNumber: "",
-      joiningDate: "",
-      monthlyFee: "",
+      startDate: "",
+      endDate: "",
     });
   };
 
   const resetHostelForm = () => {
+    setEditingHostelId(null);
     setHostelForm({
       name: "",
       type: "Boys",
       address: "",
       totalRooms: "",
       bedsPerRoom: "",
-      monthlyFee: "",
     });
   };
 
-  const handleCreateHostel = async (e) => {
+  const handleEditHostel = (hostel) => {
+    setEditingHostelId(hostel._id);
+
+    setHostelForm({
+      name: hostel.name || "",
+      type: hostel.type || "Boys",
+      address: hostel.address || "",
+      totalRooms: hostel.totalRooms || "",
+      bedsPerRoom: hostel.bedsPerRoom || "",
+    });
+  };
+
+  const handleSaveHostel = async (e) => {
     e.preventDefault();
 
     try {
@@ -204,7 +289,6 @@ function Hostel() {
         address: hostelForm.address,
         totalRooms: hostelForm.totalRooms,
         bedsPerRoom: hostelForm.bedsPerRoom,
-        monthlyFee: hostelForm.monthlyFee,
       });
 
       setMessage("Hostel created successfully.");
@@ -213,6 +297,35 @@ function Hostel() {
     } catch (err) {
       console.error("Create hostel error:", err);
       setError(err.response?.data?.message || "Unable to create hostel.");
+    } finally {
+      setSavingHostel(false);
+    }
+  };
+
+  const handleUpdateHostel = async (e) => {
+    e.preventDefault();
+
+    if (!editingHostelId) return;
+
+    try {
+      setSavingHostel(true);
+      setError("");
+      setMessage("");
+
+      await API.put(`/hostels/${editingHostelId}`, {
+        name: hostelForm.name,
+        type: hostelForm.type,
+        address: hostelForm.address,
+        totalRooms: hostelForm.totalRooms,
+        bedsPerRoom: hostelForm.bedsPerRoom,
+      });
+
+      setMessage("Hostel details updated successfully.");
+      resetHostelForm();
+      fetchHostelData();
+    } catch (err) {
+      console.error("Update hostel error:", err);
+      setError(err.response?.data?.message || "Unable to update hostel.");
     } finally {
       setSavingHostel(false);
     }
@@ -231,6 +344,11 @@ function Hostel() {
       return;
     }
 
+    if (!allocationForm.startDate || !allocationForm.endDate) {
+      setError("Please select start date and end date.");
+      return;
+    }
+
     try {
       setSavingAllocation(true);
       setError("");
@@ -240,8 +358,9 @@ function Hostel() {
         studentId: selectedStudentId,
         roomNumber: allocationForm.roomNumber,
         bedNumber: allocationForm.bedNumber,
-        joiningDate: allocationForm.joiningDate,
-        monthlyFee: allocationForm.monthlyFee,
+        joiningDate: allocationForm.startDate,
+        startDate: allocationForm.startDate,
+        endDate: allocationForm.endDate,
       });
 
       setMessage("Hostel room assigned successfully.");
@@ -276,14 +395,64 @@ function Hostel() {
     }
   };
 
+  const openRenewModal = (record) => {
+    setRenewRecord(record);
+
+    setRenewForm({
+      startDate: record.endDate ? toInputDate(record.endDate) : "",
+      endDate: "",
+    });
+  };
+
+  const closeRenewModal = () => {
+    setRenewRecord(null);
+    setRenewForm({
+      startDate: "",
+      endDate: "",
+    });
+  };
+
+  const handleRenewSubmit = async (e) => {
+    e.preventDefault();
+
+    if (!renewRecord) return;
+
+    if (!renewForm.startDate || !renewForm.endDate) {
+      setError("Please select renewal start date and end date.");
+      return;
+    }
+
+    try {
+      setSavingRenewal(true);
+      setError("");
+      setMessage("");
+
+      await API.post(`/hostels/allocations/${renewRecord._id}/renew`, {
+        startDate: renewForm.startDate,
+        endDate: renewForm.endDate,
+      });
+
+      setMessage("Hostel membership renewed successfully.");
+      closeRenewModal();
+      fetchHostelData();
+    } catch (err) {
+      console.error("Hostel renewal error:", err);
+      setError(
+        err.response?.data?.message || "Unable to renew hostel membership.",
+      );
+    } finally {
+      setSavingRenewal(false);
+    }
+  };
+
   return (
     <div className="module-page">
       <section className="page-header-card">
         <span className="page-tag">HOSTEL MODULE</span>
         <h2>Hostel Management</h2>
         <p>
-          Create hostels, assign rooms and beds, and track occupied and
-          available hostel capacity.
+          Create hostels, assign rooms and beds, manage validity dates, and
+          renew hostel memberships.
         </p>
       </section>
 
@@ -378,6 +547,12 @@ function Hostel() {
                     description="Students not yet assigned hostel"
                     value={unassignedStudents.length}
                   />
+
+                  <SummaryRow
+                    title="Expired Memberships"
+                    description="Active records whose end date has passed"
+                    value={expiredAllocations.length}
+                  />
                 </div>
               </div>
 
@@ -439,9 +614,13 @@ function Hostel() {
                             {record.roomNumber || "-"} • Bed{" "}
                             {record.bedNumber || "-"}
                           </p>
+                          <p>
+                            Valid: {formatDate(record.startDate)} to{" "}
+                            {formatDate(record.endDate)}
+                          </p>
                         </div>
 
-                        <strong>{record.status}</strong>
+                        <strong>{getDisplayStatus(record)}</strong>
                       </div>
                     ))}
                   </div>
@@ -459,7 +638,7 @@ function Hostel() {
                     <p>Add a hostel master record for this center.</p>
                   </div>
 
-                  <form onSubmit={handleCreateHostel}>
+                  <form onSubmit={handleSaveHostel}>
                     <div className="form-group">
                       <label>Hostel Name</label>
                       <input
@@ -480,7 +659,6 @@ function Hostel() {
                       >
                         <option value="Boys">Boys</option>
                         <option value="Girls">Girls</option>
-                        <option value="Other">Other</option>
                       </select>
                     </div>
 
@@ -523,13 +701,16 @@ function Hostel() {
                     </div>
 
                     <div className="form-group">
-                      <label>Monthly Fee</label>
+                      <label>Capacity</label>
                       <input
-                        type="number"
-                        name="monthlyFee"
-                        value={hostelForm.monthlyFee}
-                        onChange={handleHostelChange}
-                        placeholder="₹"
+                        type="text"
+                        value={
+                          calculatedHostelCapacity > 0
+                            ? calculatedHostelCapacity
+                            : ""
+                        }
+                        placeholder=""
+                        readOnly
                       />
                     </div>
 
@@ -540,10 +721,7 @@ function Hostel() {
                 </div>
               </section>
 
-              <HostelTable
-                hostels={hostels}
-                formatCurrency={formatCurrency}
-              />
+              <HostelTable hostels={hostels} onEdit={handleEditHostel} />
             </>
           )}
 
@@ -553,7 +731,9 @@ function Hostel() {
                 <div className="form-card">
                   <div className="form-card-header">
                     <h3>Assign Hostel Room</h3>
-                    <p>Select hostel, student, room and bed for allocation.</p>
+                    <p>
+                      Select hostel, student, room, bed and membership validity.
+                    </p>
                   </div>
 
                   <form onSubmit={handleAssignHostel}>
@@ -650,23 +830,24 @@ function Hostel() {
 
                     <div className="form-row">
                       <div className="form-group">
-                        <label>Joining Date</label>
+                        <label>From Date</label>
                         <input
                           type="date"
-                          name="joiningDate"
-                          value={allocationForm.joiningDate}
+                          name="startDate"
+                          value={allocationForm.startDate}
                           onChange={handleAllocationChange}
+                          required
                         />
                       </div>
 
                       <div className="form-group">
-                        <label>Monthly Fee</label>
+                        <label>End Date</label>
                         <input
-                          type="number"
-                          name="monthlyFee"
-                          value={allocationForm.monthlyFee}
+                          type="date"
+                          name="endDate"
+                          value={allocationForm.endDate}
                           onChange={handleAllocationChange}
-                          placeholder="₹"
+                          required
                         />
                       </div>
                     </div>
@@ -692,12 +873,184 @@ function Hostel() {
               allocations={allocations}
               loading={loading}
               formatDate={formatDate}
-              formatCurrency={formatCurrency}
+              getDisplayStatus={getDisplayStatus}
               handleDeallocate={handleDeallocate}
+              openRenewModal={openRenewModal}
               refresh={fetchHostelData}
             />
           )}
+
+          {editingHostelId && (
+            <div style={modalOverlayStyle}>
+              <div style={modalCardStyle}>
+                <div className="form-card-header">
+                  <h3>Edit Hostel Details</h3>
+                  <p>Update rooms, beds, capacity and basic hostel details.</p>
+                </div>
+
+                <form onSubmit={handleUpdateHostel}>
+                  <div className="form-group">
+                    <label>Hostel Name</label>
+                    <input
+                      name="name"
+                      value={hostelForm.name}
+                      onChange={handleHostelChange}
+                      placeholder="Example: Boys Hostel A"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label>Hostel Type</label>
+                    <select
+                      name="type"
+                      value={hostelForm.type}
+                      onChange={handleHostelChange}
+                    >
+                      <option value="Boys">Boys</option>
+                      <option value="Girls">Girls</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Address</label>
+                    <input
+                      name="address"
+                      value={hostelForm.address}
+                      onChange={handleHostelChange}
+                      placeholder="Hostel address"
+                    />
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label>Total Rooms</label>
+                      <input
+                        type="number"
+                        name="totalRooms"
+                        value={hostelForm.totalRooms}
+                        onChange={handleHostelChange}
+                        min="1"
+                        required
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label>Beds Per Room</label>
+                      <input
+                        type="number"
+                        name="bedsPerRoom"
+                        value={hostelForm.bedsPerRoom}
+                        onChange={handleHostelChange}
+                        min="1"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Capacity</label>
+                    <input
+                      type="text"
+                      value={
+                        calculatedHostelCapacity > 0
+                          ? calculatedHostelCapacity
+                          : ""
+                      }
+                      placeholder=""
+                      readOnly
+                    />
+                  </div>
+
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "10px",
+                      justifyContent: "flex-end",
+                      flexWrap: "wrap",
+                      marginTop: "18px",
+                    }}
+                  >
+                    <button
+                      className="secondary-btn"
+                      type="button"
+                      onClick={resetHostelForm}
+                    >
+                      Cancel
+                    </button>
+
+                    <button className="primary-btn" disabled={savingHostel}>
+                      {savingHostel ? "Updating..." : "Update Hostel"}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
         </>
+      )}
+
+      {renewRecord && (
+        <div style={modalOverlayStyle}>
+          <div style={modalCardStyle}>
+            <div className="form-card-header">
+              <h3>Renew Hostel Membership</h3>
+              <p>
+                Update validity dates for{" "}
+                <strong>{renewRecord.student?.studentName || "student"}</strong>
+                .
+              </p>
+            </div>
+
+            <form onSubmit={handleRenewSubmit}>
+              <div className="form-row">
+                <div className="form-group">
+                  <label>New From Date</label>
+                  <input
+                    type="date"
+                    name="startDate"
+                    value={renewForm.startDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>New End Date</label>
+                  <input
+                    type="date"
+                    name="endDate"
+                    value={renewForm.endDate}
+                    onChange={handleRenewChange}
+                    required
+                  />
+                </div>
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  gap: "10px",
+                  justifyContent: "flex-end",
+                  flexWrap: "wrap",
+                }}
+              >
+                <button
+                  className="secondary-btn"
+                  type="button"
+                  onClick={closeRenewModal}
+                >
+                  Cancel
+                </button>
+
+                <button className="primary-btn" disabled={savingRenewal}>
+                  {savingRenewal ? "Renewing..." : "Renew Membership"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -715,7 +1068,7 @@ function SummaryRow({ title, description, value }) {
   );
 }
 
-function HostelTable({ hostels, formatCurrency }) {
+function HostelTable({ hostels, onEdit }) {
   return (
     <section className="table-card">
       <div className="table-header">
@@ -741,7 +1094,8 @@ function HostelTable({ hostels, formatCurrency }) {
                 <th>Rooms</th>
                 <th>Beds/Room</th>
                 <th>Capacity</th>
-                <th>Monthly Fee</th>
+                <th>Occupancy</th>
+                <th>Action</th>
               </tr>
             </thead>
 
@@ -754,7 +1108,16 @@ function HostelTable({ hostels, formatCurrency }) {
                   <td>{hostel.totalRooms || 0}</td>
                   <td>{hostel.bedsPerRoom || 0}</td>
                   <td>{hostel.capacity || 0}</td>
-                  <td>{formatCurrency(hostel.monthlyFee)}</td>
+                  <td>{hostel.occupancy || 0}</td>
+                  <td>
+                    <button
+                      className="table-action-btn"
+                      type="button"
+                      onClick={() => onEdit(hostel)}
+                    >
+                      Edit
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -771,14 +1134,19 @@ function PendingStudentsTable({ students }) {
       <div className="table-header">
         <div>
           <h3>Pending Hostel Allocation</h3>
-          <p>Students who selected hostel facility but are not allocated yet.</p>
+          <p>
+            Students who selected hostel facility but are not allocated yet.
+          </p>
         </div>
       </div>
 
       {students.length === 0 ? (
         <div className="empty-state">
           <h4>No pending hostel students</h4>
-          <p>All eligible students are already allocated or no one requested hostel.</p>
+          <p>
+            All eligible students are already allocated or no one requested
+            hostel.
+          </p>
         </div>
       ) : (
         <div className="responsive-table">
@@ -815,8 +1183,9 @@ function AllocationTable({
   allocations,
   loading,
   formatDate,
-  formatCurrency,
+  getDisplayStatus,
   handleDeallocate,
+  openRenewModal,
   refresh,
 }) {
   return (
@@ -824,7 +1193,7 @@ function AllocationTable({
       <div className="table-header">
         <div>
           <h3>Hostel Allotment Records</h3>
-          <p>Room and bed allocation records for hostel students.</p>
+          <p>Room, bed and validity details for hostel students.</p>
         </div>
 
         <button className="secondary-btn" onClick={refresh}>
@@ -845,7 +1214,9 @@ function AllocationTable({
       ) : hostelStudents.length === 0 ? (
         <div className="empty-state">
           <h4>No hostel students found</h4>
-          <p>Admit a student with hostel facility selected to show them here.</p>
+          <p>
+            Admit a student with hostel facility selected to show them here.
+          </p>
         </div>
       ) : allocations.length === 0 ? (
         <div className="empty-state">
@@ -862,40 +1233,63 @@ function AllocationTable({
                 <th>Hostel</th>
                 <th>Room</th>
                 <th>Bed</th>
-                <th>Joining Date</th>
-                <th>Monthly Fee</th>
+                <th>From Date</th>
+                <th>End Date</th>
                 <th>Status</th>
-                <th>Action</th>
+                <th>Actions</th>
               </tr>
             </thead>
 
             <tbody>
-              {allocations.map((record) => (
-                <tr key={record._id}>
-                  <td>{record.student?.studentName || "-"}</td>
-                  <td>{record.student?.rscNumber || "-"}</td>
-                  <td>{record.hostel?.name || "-"}</td>
-                  <td>{record.roomNumber || "-"}</td>
-                  <td>{record.bedNumber || "-"}</td>
-                  <td>{formatDate(record.joiningDate)}</td>
-                  <td>{formatCurrency(record.monthlyFee)}</td>
-                  <td>
-                    <span className="table-role-badge">{record.status}</span>
-                  </td>
-                  <td>
-                    {record.status === "ACTIVE" ? (
-                      <button
-                        className="secondary-btn"
-                        onClick={() => handleDeallocate(record)}
+              {allocations.map((record) => {
+                const displayStatus = getDisplayStatus(record);
+
+                return (
+                  <tr key={record._id}>
+                    <td>{record.student?.studentName || "-"}</td>
+                    <td>{record.student?.rscNumber || "-"}</td>
+                    <td>{record.hostel?.name || "-"}</td>
+                    <td>{record.roomNumber || "-"}</td>
+                    <td>{record.bedNumber || "-"}</td>
+                    <td>
+                      {formatDate(record.startDate || record.joiningDate)}
+                    </td>
+                    <td>{formatDate(record.endDate)}</td>
+                    <td>
+                      <span className="table-role-badge">{displayStatus}</span>
+                    </td>
+                    <td>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          flexWrap: "wrap",
+                        }}
                       >
-                        Mark Left
-                      </button>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
+                        <button
+                          className="table-action-btn"
+                          type="button"
+                          onClick={() => openRenewModal(record)}
+                        >
+                          Renew
+                        </button>
+
+                        {record.status === "ACTIVE" ? (
+                          <button
+                            className="secondary-btn"
+                            type="button"
+                            onClick={() => handleDeallocate(record)}
+                          >
+                            Mark Left
+                          </button>
+                        ) : (
+                          <span>-</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

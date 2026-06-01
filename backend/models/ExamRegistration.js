@@ -27,6 +27,22 @@ const examRegistrationSchema = new mongoose.Schema(
       trim: true,
     },
 
+    aadhaarEncrypted: {
+      type: String,
+      required: true,
+    },
+
+    aadhaarHash: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    aadhaarLast4: {
+      type: String,
+      required: true,
+    },
+
     dob: {
       type: Date,
       required: true,
@@ -93,7 +109,7 @@ const examRegistrationSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 examRegistrationSchema.index({ preferredCenter: 1, year: 1 });

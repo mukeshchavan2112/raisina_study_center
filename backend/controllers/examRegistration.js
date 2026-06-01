@@ -1,18 +1,81 @@
 import asyncHandler from "express-async-handler";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import Center from "../models/Center.js";
 import ExamRegistration from "../models/ExamRegistration.js";
 import { sendSuccess, sendError } from "../utils/responseHandler.js";
-import { resolveCenterScope, ensureCenterScope } from "../utils/accessControl.js";
+import {
+  resolveCenterScope,
+  ensureCenterScope,
+} from "../utils/accessControl.js";
 import { generateExamRegistrationNumber } from "../utils/examRegistrationNumber.js";
 import { ensureDefaultCenters } from "../services/centerBootstrap.js";
+
+const AADHAAR_ALGORITHM = "aes-256-gcm";
+
+function getAadhaarEncryptionKey() {
+  const secret = process.env.AADHAAR_ENCRYPTION_KEY;
+
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "AADHAAR_ENCRYPTION_KEY must be set and must be at least 32 characters long",
+    );
+  }
+
+  return crypto.createHash("sha256").update(secret).digest();
+}
+
+function getAadhaarHashPepper() {
+  const pepper = process.env.AADHAAR_HASH_PEPPER;
+
+  if (!pepper || pepper.length < 16) {
+    throw new Error(
+      "AADHAAR_HASH_PEPPER must be set and must be at least 16 characters long",
+    );
+  }
+
+  return pepper;
+}
+
+function normalizeAadhaar(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function encryptAadhaar(aadhaarNumber) {
+  const iv = crypto.randomBytes(12);
+  const key = getAadhaarEncryptionKey();
+
+  const cipher = crypto.createCipheriv(AADHAAR_ALGORITHM, key, iv);
+
+  const encrypted = Buffer.concat([
+    cipher.update(aadhaarNumber, "utf8"),
+    cipher.final(),
+  ]);
+
+  const authTag = cipher.getAuthTag();
+
+  return [
+    iv.toString("hex"),
+    authTag.toString("hex"),
+    encrypted.toString("hex"),
+  ].join(":");
+}
+
+function hashAadhaar(aadhaarNumber) {
+  return crypto
+    .createHash("sha256")
+    .update(`${aadhaarNumber}:${getAadhaarHashPepper()}`)
+    .digest("hex");
+}
 
 // Public: GET /api/public/centers
 export const getPublicCenters = asyncHandler(async (req, res) => {
   await ensureDefaultCenters();
 
   const centers = await Center.find({ deleted: false })
-    .select("centerName city state centerCode address phone contactNumber email")
+    .select(
+      "centerName city state centerCode address phone contactNumber email",
+    )
     .sort({ centerName: 1 });
 
   return sendSuccess(res, 200, "Centers fetched", centers);
@@ -23,6 +86,7 @@ export const registerCandidate = asyncHandler(async (req, res) => {
   const {
     fullName,
     mobileNumber,
+    aadhaarNumber,
     dob,
     addressLine,
 
@@ -40,9 +104,12 @@ export const registerCandidate = asyncHandler(async (req, res) => {
   const admissionCenterId =
     preferredAdmissionCenter || preferredCenter || preferredExamCenter;
 
+  const cleanAadhaar = normalizeAadhaar(aadhaarNumber);
+
   if (
     !fullName ||
     !mobileNumber ||
+    !cleanAadhaar ||
     !dob ||
     !addressLine ||
     !examCenterId ||
@@ -51,8 +118,12 @@ export const registerCandidate = asyncHandler(async (req, res) => {
     return sendError(
       res,
       400,
-      "fullName, mobileNumber, dob, addressLine, preferredExamCenter, and preferredAdmissionCenter are required"
+      "fullName, mobileNumber, aadhaarNumber, dob, addressLine, preferredExamCenter, and preferredAdmissionCenter are required",
     );
+  }
+
+  if (!/^\d{12}$/.test(cleanAadhaar)) {
+    return sendError(res, 400, "Valid 12 digit Aadhaar number is required");
   }
 
   if (
@@ -84,13 +155,28 @@ export const registerCandidate = asyncHandler(async (req, res) => {
     return sendError(res, 404, "Preferred admission center not found");
   }
 
+  const aadhaarHash = hashAadhaar(cleanAadhaar);
+
   const existing = await ExamRegistration.findOne({
-    mobileNumber,
     year: examYear,
     deleted: false,
     $or: [
-      { preferredExamCenter: examCenterId },
-      { preferredCenter: examCenterId },
+      {
+        mobileNumber: mobileNumber.trim(),
+        preferredExamCenter: examCenterId,
+      },
+      {
+        mobileNumber: mobileNumber.trim(),
+        preferredCenter: examCenterId,
+      },
+      {
+        aadhaarHash,
+        preferredExamCenter: examCenterId,
+      },
+      {
+        aadhaarHash,
+        preferredCenter: examCenterId,
+      },
     ],
   });
 
@@ -101,13 +187,13 @@ export const registerCandidate = asyncHandler(async (req, res) => {
       "Candidate is already registered for this exam center and year",
       {
         registrationNumber: existing.registrationNumber,
-      }
+      },
     );
   }
 
   const registrationNumber = await generateExamRegistrationNumber(
     examCenterId,
-    examYear
+    examYear,
   );
 
   const registration = await ExamRegistration.create({
@@ -115,6 +201,11 @@ export const registerCandidate = asyncHandler(async (req, res) => {
     year: examYear,
     fullName: fullName.trim(),
     mobileNumber: mobileNumber.trim(),
+
+    aadhaarEncrypted: encryptAadhaar(cleanAadhaar),
+    aadhaarHash,
+    aadhaarLast4: cleanAadhaar.slice(-4),
+
     dob,
     addressLine: addressLine.trim(),
 
@@ -126,7 +217,21 @@ export const registerCandidate = asyncHandler(async (req, res) => {
     preferredAdmissionCenter: admissionCenterId,
   });
 
-  return sendSuccess(res, 201, "Exam registration successful", registration);
+  return sendSuccess(res, 201, "Exam registration successful", {
+    _id: registration._id,
+    registrationNumber: registration.registrationNumber,
+    year: registration.year,
+    fullName: registration.fullName,
+    mobileNumber: registration.mobileNumber,
+    aadhaarMasked: `XXXX-XXXX-${registration.aadhaarLast4}`,
+    dob: registration.dob,
+    addressLine: registration.addressLine,
+    preferredCenter: registration.preferredCenter,
+    preferredExamCenter: registration.preferredExamCenter,
+    preferredAdmissionCenter: registration.preferredAdmissionCenter,
+    status: registration.status,
+    createdAt: registration.createdAt,
+  });
 });
 
 // Admin: GET /api/exam-registrations?centerId=&year=&status=
@@ -213,8 +318,7 @@ export const updateExamRegistrationStatus = asyncHandler(async (req, res) => {
   }
 
   const scopedCenterId =
-    registration.preferredExamCenter ||
-    registration.preferredCenter;
+    registration.preferredExamCenter || registration.preferredCenter;
 
   ensureCenterScope(req, scopedCenterId);
 

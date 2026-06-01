@@ -47,6 +47,7 @@ export const register = asyncHandler(async (req, res) => {
     role = "CENTER_ADMIN",
     center,
     centerId,
+    aadharNumber,
   } = req.body;
 
   if (!email || !password) {
@@ -81,6 +82,9 @@ export const register = asyncHandler(async (req, res) => {
 
   const finalCenterId = centerId || center || null;
 
+  let normalizedAadhaar = null;
+  let aadhaarHashForCheck = null;
+
   if (role === "CENTER_ADMIN") {
     if (!finalCenterId) {
       return sendError(res, 400, "Center admin must be assigned to a center");
@@ -94,9 +98,40 @@ export const register = asyncHandler(async (req, res) => {
     if (!assignedCenter) {
       return sendError(res, 404, "Assigned center not found");
     }
+
+    normalizedAadhaar = User.normalizeAadhaar(aadharNumber);
+
+    if (!/^\d{12}$/.test(normalizedAadhaar)) {
+      return sendError(res, 400, "Aadhaar number must be exactly 12 digits");
+    }
+
+    const tempUser = new User({
+      firstName: "Temp",
+      lastName: "User",
+      email: `temp-${Date.now()}@example.com`,
+      password: "temporary-password",
+      role: "CENTER_ADMIN",
+      center: finalCenterId,
+    });
+
+    tempUser.setAadhaarNumber(normalizedAadhaar);
+    aadhaarHashForCheck = tempUser.aadharHash;
+
+    const existingAadhaarUser = await User.findOne({
+      aadharHash: aadhaarHashForCheck,
+      deleted: false,
+    }).select("+aadharHash");
+
+    if (existingAadhaarUser) {
+      return sendError(
+        res,
+        400,
+        "A center admin already exists with this Aadhaar number"
+      );
+    }
   }
 
-  const user = await User.create({
+  const user = new User({
     firstName: finalFirstName || "Center",
     lastName: finalLastName || "Admin",
     email: email.toLowerCase(),
@@ -108,9 +143,15 @@ export const register = asyncHandler(async (req, res) => {
     deleted: false,
   });
 
+  if (role === "CENTER_ADMIN" && normalizedAadhaar) {
+    user.setAadhaarNumber(normalizedAadhaar);
+  }
+
+  await user.save();
+
   const populatedUser = await User.findById(user._id).populate(
     "center",
-    "centerName centerCode city state",
+    "centerName centerCode city state"
   );
 
   const token = signToken(populatedUser);

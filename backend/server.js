@@ -30,9 +30,27 @@ const app = express();
 // Security & parsing
 app.use(helmet());
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://raisina-study-center.vercel.app",
+  process.env.CLIENT_URL,
+  process.env.FRONTEND_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin(origin, callback) {
+      // Allow server-to-server requests, Postman, curl, and health checks
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Not allowed by CORS: ${origin}`));
+    },
     credentials: true,
   })
 );
@@ -73,6 +91,14 @@ app.use("/api/receipts", receiptRoutes);
 
 // 404 + global error handler
 app.get("/favicon.ico", (_req, res) => res.status(204).end());
+
+app.get("/", (_req, res) => {
+  res.json({
+    success: true,
+    message: "Raisina Study Center ERP Backend is running",
+    health: "/api/health",
+  });
+});
 
 app.use(notFound);
 app.use(errorHandler);

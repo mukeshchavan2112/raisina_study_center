@@ -358,14 +358,17 @@ Frontend Deployment
 The React frontend is deployed on Vercel.
 
 Frontend URL: https://raisina-study-center.vercel.app
+
 Backend Deployment
 
 The Node.js and Express backend is deployed on Render.
 
 Backend URL: https://raisina-study-center-backend.onrender.com
+
 Database
 
 The project uses MongoDB Atlas as the cloud database.
+
 ---
 
 ## Security Features

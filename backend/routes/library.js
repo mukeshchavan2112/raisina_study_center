@@ -11,6 +11,7 @@ import {
   markOverdue,
   getLibraryStudents,
   updateStudySpace,
+  renewLibraryMembership,
 } from "../controllers/library.js";
 
 const router = express.Router();
@@ -24,6 +25,12 @@ router.put(
   "/students/:studentId/study-space",
   authorizeRoles("CENTER_ADMIN"),
   updateStudySpace
+);
+
+router.put(
+  "/students/:studentId/renew",
+  authorizeRoles("CENTER_ADMIN"),
+  renewLibraryMembership
 );
 
 // Books

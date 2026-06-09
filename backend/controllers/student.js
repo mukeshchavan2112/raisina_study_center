@@ -154,7 +154,7 @@ export const createStudent = asyncHandler(async (req, res) => {
   const rscNumber = await generateRSC(finalCenterId);
   const prn = await generatePRN(finalCenterId);
 
-  const student = await Student.create({
+  const student = new Student({
     rscNumber,
     prn,
 
@@ -165,7 +165,6 @@ export const createStudent = asyncHandler(async (req, res) => {
     parentMobileNumber,
 
     dob,
-    aadharNumber,
     addresses: Array.isArray(addresses) ? addresses : [],
 
     education,
@@ -199,6 +198,9 @@ export const createStudent = asyncHandler(async (req, res) => {
     deleted: false,
   });
 
+  if (aadharNumber) student.setAadhaarNumber(aadharNumber);
+  await student.save();
+
   return sendSuccess(res, 201, "Student admitted", {
     student,
     rscNumber,
@@ -224,7 +226,6 @@ export const updateStudent = asyncHandler(async (req, res) => {
     "mobileNumber",
     "parentMobileNumber",
     "dob",
-    "aadharNumber",
     "addresses",
     "education",
     "percentage",
@@ -235,6 +236,10 @@ export const updateStudent = asyncHandler(async (req, res) => {
     "meritRank",
     "admissionDate",
   ];
+
+  if (req.body.aadharNumber) {
+    student.setAadhaarNumber(req.body.aadharNumber);
+  }
 
   allowedFields.forEach((field) => {
     if (req.body[field] !== undefined) {

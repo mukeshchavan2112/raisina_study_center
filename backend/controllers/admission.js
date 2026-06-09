@@ -753,7 +753,7 @@ export const admitStudent = asyncHandler(async (req, res) => {
 
   const rscNumber = await generateRSC(finalCenterId);
   const prn = await generatePRN(finalCenterId);
-  const student = await Student.create({
+  const student = new Student({
     rscNumber,
     prn,
 
@@ -764,7 +764,6 @@ export const admitStudent = asyncHandler(async (req, res) => {
     parentMobileNumber: parentMobileNumber || null,
 
     dob: finalDob,
-    aadharNumber: aadharNumber || null,
     addresses: finalAddresses,
 
     education: education || null,
@@ -796,6 +795,9 @@ export const admitStudent = asyncHandler(async (req, res) => {
       remarks: "",
     },
   });
+
+  if (aadharNumber) student.setAadhaarNumber(aadharNumber);
+  await student.save();
 
   if (selectedMeritList && selectedEntry) {
     selectedEntry.studentId = student._id;

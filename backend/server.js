@@ -60,7 +60,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Logging
 if (process.env.NODE_ENV !== "test") {
-  app.use(morgan("dev"));
+  app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 }
 
 // Audit trail on all mutating requests

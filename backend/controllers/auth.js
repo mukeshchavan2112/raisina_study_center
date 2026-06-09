@@ -13,7 +13,7 @@ const signToken = (user) =>
       centerId: user.center?._id ?? user.center ?? null,
     },
     process.env.JWT_SECRET,
-    { expiresIn: "7d" },
+    { expiresIn: "8h" },
   );
 
 const buildUserPayload = (user) => {

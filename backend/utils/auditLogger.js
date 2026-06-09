@@ -1,57 +1,58 @@
-// Audit logging utility for admin actions
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import AuditLog from "../models/AuditLog.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Sensitive fields that should never be logged
+const SENSITIVE_FIELDS = ["password", "newPassword", "currentPassword", "confirmPassword", "aadharNumber"];
 
-const logDir = path.join(__dirname, '../logs');
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
-}
+const sanitizeBody = (body = {}) => {
+  const sanitized = { ...body };
+  SENSITIVE_FIELDS.forEach((field) => {
+    if (field in sanitized) sanitized[field] = "[REDACTED]";
+  });
+  return sanitized;
+};
 
-const auditLogFile = path.join(logDir, 'audit.log');
+export const auditLog = async (action, userId, userType, details = {}) => {
+  try {
+    await AuditLog.create({
+      action,
+      userId: userId || null,
+      userType: userType || "admin",
+      ip: details.ip || "unknown",
+      statusCode: details.statusCode || null,
+      body: sanitizeBody(details.body),
+      path: details.path || null,
+      method: details.method || null,
+    });
+  } catch (err) {
+    // Audit logging should never crash the app
+    console.error("[AUDIT ERROR]", err.message);
+  }
 
-export const auditLog = (action, userId, userType, details = {}) => {
-  const timestamp = new Date().toISOString();
-  const logEntry = {
-    timestamp,
-    action,
-    userId,
-    userType,
-    details,
-    ip: details.ip || 'unknown'
-  };
-
-  const logLine = JSON.stringify(logEntry) + '\n';
-  
-  // Append to audit log file
-  fs.appendFileSync(auditLogFile, logLine, 'utf8');
-  
-  // Also log to console in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[AUDIT] ${timestamp} - ${action} by ${userType} ${userId}`);
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[AUDIT] ${new Date().toISOString()} - ${action} by ${userType} ${userId}`);
   }
 };
 
-// Middleware to automatically log requests
 export const auditMiddleware = (req, res, next) => {
   const originalSend = res.send;
-  res.send = function(data) {
-    if (req.user && req.method !== 'GET') {
+
+  res.send = function (data) {
+    if (req.user && req.method !== "GET") {
       auditLog(
         `${req.method} ${req.path}`,
         req.user.id,
-        req.user.type || 'admin',
+        req.user.role || "admin",
         {
           ip: req.ip || req.connection?.remoteAddress,
           statusCode: res.statusCode,
-          body: req.body
+          body: req.body,
+          path: req.path,
+          method: req.method,
         }
       );
     }
     return originalSend.call(this, data);
   };
+
   next();
 };

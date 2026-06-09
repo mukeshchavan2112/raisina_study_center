@@ -102,7 +102,6 @@ const userSchema = new mongoose.Schema(
       type: String,
       select: false,
       default: null,
-      index: true,
     },
 
     forcePasswordChange: {
@@ -175,7 +174,6 @@ userSchema.pre("save", function (next) {
   next();
 });
 
-userSchema.index({ email: 1 });
 userSchema.index({ role: 1, center: 1 });
 userSchema.index({ aadharHash: 1 }, { unique: true, sparse: true });
 

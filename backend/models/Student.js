@@ -1,4 +1,55 @@
 import mongoose from "mongoose";
+import crypto from "crypto";
+
+// ── Aadhaar helpers ──────────────────────────────────────────────────────────
+
+const normalizeAadhaar = (value) => {
+  return String(value || "").replace(/\D/g, "");
+};
+
+const maskAadhaar = (last4) => {
+  if (!last4) return "";
+  return `XXXX XXXX ${last4}`;
+};
+
+const getEncryptionKey = () => {
+  const secret = process.env.AADHAAR_ENCRYPTION_KEY;
+  if (!secret || secret.length < 32) {
+    throw new Error(
+      "AADHAAR_ENCRYPTION_KEY must be set in .env and should be at least 32 characters"
+    );
+  }
+  return crypto.createHash("sha256").update(secret).digest();
+};
+
+const encryptAadhaar = (plainText) => {
+  const key = getEncryptionKey();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([
+    cipher.update(plainText, "utf8"),
+    cipher.final(),
+  ]);
+  const authTag = cipher.getAuthTag();
+  return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted.toString(
+    "hex"
+  )}`;
+};
+
+const hashAadhaar = (plainText) => {
+  const pepper = process.env.AADHAAR_HASH_PEPPER;
+  if (!pepper || pepper.length < 16) {
+    throw new Error(
+      "AADHAAR_HASH_PEPPER must be set in .env and should be at least 16 characters"
+    );
+  }
+  return crypto
+    .createHash("sha256")
+    .update(`${plainText}:${pepper}`)
+    .digest("hex");
+};
+
+// ── Schemas ──────────────────────────────────────────────────────────────────
 
 const addressSchema = new mongoose.Schema(
   {
@@ -24,7 +75,6 @@ const studentSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      index: true,
     },
 
     prn: {
@@ -32,7 +82,6 @@ const studentSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      index: true,
     },
 
     center: {
@@ -61,10 +110,9 @@ const studentSchema = new mongoose.Schema(
       type: Date,
     },
 
-    aadharNumber: {
-      type: String,
-      trim: true,
-    },
+    aadharNumberEncrypted: { type: String, default: null },
+    aadharLast4: { type: String, default: null },
+    aadharHash: { type: String, default: null, select: false },
 
     addresses: [addressSchema],
 
@@ -163,7 +211,7 @@ const studentSchema = new mongoose.Schema(
         type: Boolean,
         default: false,
       },
-      
+
       joiningDate: {
         type: Date,
         default: null,
@@ -209,13 +257,38 @@ const studentSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true },
+  {
+  timestamps: true,
+  toJSON: {
+    transform(_doc, ret) {
+      delete ret.aadharNumberEncrypted;
+      delete ret.aadharHash;
+      if (ret.aadharLast4) {
+        ret.maskedAadharNumber = `XXXX XXXX ${ret.aadharLast4}`;
+      }
+      delete ret.aadharLast4;
+      return ret;
+    }
+  }
+}
 );
+
+// ── Instance methods & statics (AFTER studentSchema is defined) ──────────────
+
+studentSchema.methods.setAadhaarNumber = function (aadhaarNumber) {
+  const normalized = normalizeAadhaar(aadhaarNumber);
+  if (!normalized) return;
+  if (!/^\d{12}$/.test(normalized)) throw new Error("Aadhaar number must be exactly 12 digits");
+  this.aadharNumberEncrypted = encryptAadhaar(normalized);
+  this.aadharLast4 = normalized.slice(-4);
+  this.aadharHash = hashAadhaar(normalized);
+};
+studentSchema.statics.normalizeAadhaar = normalizeAadhaar;
+
+// ── Indexes ───────────────────────────────────────────────────────────────────
 
 studentSchema.index({ center: 1, studentType: 1 });
 studentSchema.index({ center: 1, admissionDate: -1 });
-studentSchema.index({ rscNumber: 1 });
-studentSchema.index({ prn: 1 });
 
 const Student = mongoose.model("Student", studentSchema);
 

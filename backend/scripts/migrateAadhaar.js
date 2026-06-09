@@ -72,6 +72,13 @@ async function migrate() {
   console.log(`⚠️  Skipped  : ${skipped}`);
   console.log(`❌ Failed   : ${failed}`);
 
+  // Remove old plain text field from all documents
+  const cleanup = await mongoose.connection.collection("students").updateMany(
+    {},
+    { $unset: { aadharNumber: "" } }
+  );
+  console.log(`\n🧹 Cleaned up aadharNumber field from ${cleanup.modifiedCount} documents`);
+
   await mongoose.disconnect();
 }
 

@@ -2,6 +2,7 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import morgan from "morgan";
+import compression from "compression";
 import "dotenv/config";
 
 import connectDB from "./config/db.js";
@@ -29,6 +30,7 @@ const app = express();
 
 // Security & parsing
 app.use(helmet());
+app.use(compression());
 
 const allowedOrigins = [
   "http://localhost:5173",
